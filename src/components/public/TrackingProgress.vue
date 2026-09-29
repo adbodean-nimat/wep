@@ -2,29 +2,36 @@
 import { computed } from 'vue'
 import { Check, Circle } from '@lucide/vue'
 import type { PublicTrackingStatus } from '@/types/publicTracking'
+import { getPublicProgressStep, PUBLIC_PROGRESS_STEPS } from '@/utils/publicTrackingPresentation'
 
 const props = defineProps<{ status: PublicTrackingStatus }>()
 
-const special = computed(() => ['NO_ENTREGADA', 'CANCELADA', 'CERRADA_PARCIAL'].includes(props.status))
-const currentStep = computed(() => {
-  if (props.status === 'ENTREGADA') return 3
-  if (props.status === 'EN_REPARTO' || props.status === 'CLIENTE_AVISADO') return 2
-  return 1
-})
-const steps = ['Programada', 'En reparto', 'Entregada']
+const currentStep = computed(() => getPublicProgressStep(props.status))
+
+function stepState(index: number): 'completo' | 'actual' | 'pendiente' {
+  if (currentStep.value === null) return 'pendiente'
+  if (props.status === 'ENTREGADA' || index < currentStep.value) return 'completo'
+  return index === currentStep.value ? 'actual' : 'pendiente'
+}
 </script>
 
 <template>
-  <section v-if="!special" class="rounded-3xl border bg-white p-6 shadow-sm" aria-label="Progreso de la entrega">
+  <section v-if="currentStep !== null" class="rounded-3xl border bg-white p-5 shadow-sm sm:p-6" aria-label="Progreso de la entrega">
     <h2 class="text-sm font-bold uppercase tracking-wider text-muted-foreground">Progreso</h2>
-    <ol class="mt-5 grid grid-cols-3">
-      <li v-for="(step, index) in steps" :key="step" class="relative flex flex-col items-center text-center">
-        <span v-if="index > 0" class="absolute right-1/2 top-4 h-0.5 w-full" :class="index + 1 <= currentStep ? 'bg-primary' : 'bg-border'" aria-hidden="true" />
-        <span class="relative z-10 flex size-8 items-center justify-center rounded-full border-2 bg-white" :class="index + 1 <= currentStep ? 'border-primary text-primary' : 'border-border text-muted-foreground'">
-          <Check v-if="index + 1 < currentStep || currentStep === 3" :size="17" stroke-width="3" aria-hidden="true" />
-          <Circle v-else :size="10" :fill="index + 1 === currentStep ? 'currentColor' : 'none'" aria-hidden="true" />
+    <ol class="mt-5 space-y-4">
+      <li v-for="(step, index) in PUBLIC_PROGRESS_STEPS" :key="step" class="relative flex items-start gap-3">
+        <span v-if="index < PUBLIC_PROGRESS_STEPS.length - 1"
+          class="absolute -bottom-4 left-[17px] top-9 w-0.5"
+          :class="stepState(index + 1) === 'pendiente' ? 'bg-border' : 'bg-primary'"
+          aria-hidden="true" />
+        <span class="flex size-9 shrink-0 items-center justify-center rounded-full border-2"
+          :class="stepState(index) === 'pendiente' ? 'border-border text-muted-foreground' : 'border-primary text-primary'"
+          aria-hidden="true">
+          <Check v-if="stepState(index) === 'completo'" :size="19" stroke-width="3" />
+          <Circle v-else :size="11" :fill="stepState(index) === 'actual' ? 'currentColor' : 'none'" />
         </span>
-        <span class="mt-2 text-xs font-semibold" :class="index + 1 <= currentStep ? 'text-foreground' : 'text-muted-foreground'">{{ step }}</span>
+        <span class="flex min-h-9 min-w-0 flex-1 items-center font-semibold" :class="stepState(index) === 'pendiente' ? 'text-muted-foreground' : 'text-foreground'">{{ step }}</span>
+        <span class="flex min-h-9 items-center text-xs text-muted-foreground">{{ stepState(index) }}</span>
       </li>
     </ol>
   </section>

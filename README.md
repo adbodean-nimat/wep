@@ -30,7 +30,9 @@ Content-Type: application/json
 }
 ```
 
-La PWA no llama este endpoint porque sincronizar datos maestros es una responsabilidad administrativa del backend. Si la fuente tiene entregas pero `/pwa/viajes` responde `totalViajes: 0`, la pantalla mostrará el estado vacío hasta que se ejecute la sincronización.
+La PWA no llama este endpoint porque sincronizar datos maestros es una responsabilidad administrativa del backend. Si la fuente tiene entregas pero `/pwa/viajes` responde `totalViajes: 0`, la pantalla mostrará el estado vacío hasta que se ejecute la sincronización. Para detectar altas del ERP sin intervención manual, el backend debe ejecutar esta sincronización periódicamente o al confirmar nuevas entregas.
+
+Mientras el chofer mira una vuelta programada, la PWA vuelve a consultar `/pwa/viajes` cada 60 segundos con la pantalla visible y al recuperar el foco. Si aparecen órdenes nuevas en la respuesta, actualiza las paradas y exige que el chofer las revise antes de habilitar “Iniciar vuelta”. También consulta la API al tocar ese botón y de nuevo antes de enviar el inicio. Estas comprobaciones detectan cambios ya importados; una garantía completa frente a cambios simultáneos requiere que el backend valide la versión o los IDs de las entregas en la misma transacción que inicia la vuelta.
 
 El 14/09/2026 se comprobó el flujo real: la fuente devolvía 47 filas y la sincronización creó 3 vehículos, 6 viajes y 47 entregas, sin filas omitidas. Luego la PWA mostró las 6 vueltas en `http://localhost:5173`; también cargó una vuelta de 11 paradas y su detalle, sin ejecutar inicio, aviso, entrega, cambio de orden ni finalización.
 
@@ -104,7 +106,7 @@ En un teléfono, `localhost` es el teléfono: usar el host accesible del backend
 6. “Ver info” abre un diálogo inferior con detalle, llamada y enlace a Google Maps. Los campos vacíos se omiten.
 7. Finalizar cuando todas las entregas estén entregadas, no entregadas o canceladas. El backend sigue decidiendo si acepta la operación.
 
-Si un refresh falla, se retiran las acciones basadas en datos anteriores y se muestra “Reintentar”. No hay reintentos automáticos de POST, polling ni cola offline. Los errores públicos de WEP se muestran como texto; no se expone HTML del servidor.
+Si un refresh falla, se retiran las acciones basadas en datos anteriores y se muestra “Reintentar”. La comprobación periódica de nuevas órdenes es sólo un GET mientras la vuelta está programada; no hay reintentos automáticos de POST ni cola offline. Los errores públicos de WEP se muestran como texto; no se expone HTML del servidor.
 
 ## Endpoints consumidos
 

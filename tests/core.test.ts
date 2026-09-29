@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { localDate, timeWindow, validLocalDate } from '../src/utils/formatters'
+import { localDate, mapAddress, timeWindow, validLocalDate } from '../src/utils/formatters'
 import { isClosed, moveDelivery, pendingCount } from '../src/utils/deliveries'
 import { flattenStopDeliveries, isStopClosed, moveStop, pendingStopCount, totalOrderCount } from '../src/utils/stops'
 import { request } from '../src/api/http'
@@ -35,6 +35,13 @@ describe('Fecha y estados operativos', () => {
   it('no inventa ventanas horarias', () => {
     expect(timeWindow(null, null)).toBe('')
     expect(timeWindow('09:00:00', '11:00:00')).toBe('09:00 – 11:00')
+  })
+  it('omite el código ERP de la localidad al construir la búsqueda del mapa', () => {
+    expect(mapAddress('LAS VIOLETAS 1636', '1061, BENITO LEGUIZAMON')).toBe('LAS VIOLETAS 1636, BENITO LEGUIZAMON, Concordia, Entre Ríos, Argentina')
+    expect(mapAddress('PANAMA 139', '1062, VILLA ADELA')).toBe('PANAMA 139, VILLA ADELA, Concordia, Entre Ríos, Argentina')
+    expect(mapAddress('Ruta 11 km 250', '25 de Mayo')).toBe('Ruta 11 km 250, 25 de Mayo, Concordia, Entre Ríos, Argentina')
+    expect(mapAddress('San Lorenzo 1234', 'CONCORDIA')).toBe('San Lorenzo 1234, CONCORDIA, Entre Ríos, Argentina')
+    expect(mapAddress('San Lorenzo 1234', null)).toBe('San Lorenzo 1234, Concordia, Entre Ríos, Argentina')
   })
   it('sólo permite cerrar con estados terminales conocidos', () => {
     expect(['ENTREGADA', 'NO_ENTREGADA', 'CANCELADA'].every(s => isClosed(s as Delivery['estado']['codigo']))).toBe(true)
@@ -126,6 +133,27 @@ describe('Cliente HTTP', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(new Response('{"ok":true,"tracking":{"estado":{"codigo":"ENTREGADA","nombre":"Entregada"}}}')))
     await expect(getPublicTracking('abcdefghijklmnopqrstuv')).rejects.toMatchObject({ status: 502 })
   })
+  it('conserva sólo el ETA válido y los campos públicos del tracking', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', '/api/wep')
+    const base = {
+      estado: { codigo: 'CLIENTE_AVISADO', nombre: 'Cliente avisado' },
+      fechaEntrega: '2026-09-18',
+      horario: { desde: '07:30', hasta: '10:30' },
+      destino: { localidad: 'CONCORDIA', domicilio: 'DATO INTERNO' },
+      ultimaActualizacion: null,
+      viaje: { enCurso: true, patente: 'DATO INTERNO' },
+      vehiculo: { posicionDisponible: false, gestya_id: 'DATO INTERNO' },
+      telefono: 'DATO INTERNO',
+    }
+    const fetchMock = vi.fn<typeof fetch>()
+    vi.stubGlobal('fetch', fetchMock)
+    for (const [eta, expected] of [[25, 25], [null, undefined], [-1, undefined], ['25', undefined]] as const) {
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, tracking: { ...base, etaMinutos: eta } })))
+      const tracking = await getPublicTracking('abcdefghijklmnopqrstuv')
+      expect(tracking.etaMinutos).toBe(expected)
+      expect(JSON.stringify(tracking)).not.toContain('DATO INTERNO')
+    }
+  })
   it('limpia la sesión cuando un endpoint protegido responde 401', async () => {
     vi.stubEnv('VITE_API_BASE_URL', '/api/wep')
     setToken('token-de-prueba')
@@ -174,6 +202,18 @@ describe('Cliente HTTP', () => {
     vi.stubEnv('VITE_API_BASE_URL', '/api/wep')
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"ok":false,"message":"La entrega ya tiene un aviso enviado"}', { status: 409 })))
     await expect(request('/pwa/entregas/101/avisar')).rejects.toMatchObject({ status: 409, message: 'La entrega ya tiene un aviso enviado' })
+  })
+  it('conserva el código controlado cuando el ETA no está disponible', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', '/api/wep')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: false,
+      code: 'ETA_NO_DISPONIBLE',
+      message: 'No se pudo calcular el tiempo estimado de llegada.',
+    }), { status: 503 })))
+    await expect(request('/pwa/viajes/10/paradas/stop_ab12cd34/avisar')).rejects.toMatchObject({
+      status: 503,
+      code: 'ETA_NO_DISPONIBLE',
+    })
   })
   it('no muestra HTML de errores', async () => {
     vi.stubEnv('VITE_API_BASE_URL', '/api/wep')

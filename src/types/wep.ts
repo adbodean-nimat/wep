@@ -26,6 +26,8 @@ export interface WepStopDelivery {
   ordenSecuencia: number | null
   ordenPreparacion: DocumentReference
   notaPedido: DocumentReference
+  observacionEntrega?: string | null
+  observaciones?: string | null
   estado: State
   bultos: number | null
   peso: number | null
@@ -65,7 +67,17 @@ export type DeliveryDetailResponse = ApiResponse<{ entrega: DeliveryDetail }>
 export type StartResponse = ApiResponse<{ message: string; viaje: { id: number; estado: TripStatus; iniciadoAt: string }; entregasActualizadas: number }>
 export type FinishResponse = ApiResponse<{ message: string; viaje: { id: number; estado: TripStatus; iniciadoAt: string | null; finalizadoAt: string }; resumen: TripSummary }>
 export type OrderResponse = ApiResponse<{ message: string; viajeId: number; totalEntregas: number; entregas: { id: number; ordenSecuencia: number }[] }>
-export type NoticeResponse = ApiResponse<{ message: string; entrega: { id: number; estado: State }; notificacion: { tipo: string; canal: 'WHATSAPP'; estado: 'ENVIADO'; enviadoAt: string } }>
+export interface NoticeResult {
+  tipo: string
+  canal: 'WHATSAPP'
+  estado: 'ENVIADO'
+  enviadoAt: string
+  resultado?: 'ENVIADA' | 'YA_NOTIFICADA'
+  etaMinutos?: number | null
+  precisionDestino?: 'DOMICILIO' | 'ZONA_APROXIMADA'
+  messageId?: string | null
+}
+export type NoticeResponse = ApiResponse<{ message: string; entrega: { id: number; estado: State }; notificacion: NoticeResult }>
 export type DeliveredResponse = ApiResponse<{ message: string; entrega: { id: number; estado: State; entregadoAt: string; posicion: Position } }>
 export interface Position { latitud: number | null; longitud: number | null }
 export type NoDeliveryReason = 'CLIENTE_AUSENTE' | 'DOMICILIO_CERRADO' | 'DIRECCION_INCORRECTA' | 'CLIENTE_RECHAZA' | 'SIN_ACCESO' | 'PROBLEMA_DE_CARGA' | 'OTRO'
@@ -81,8 +93,9 @@ export interface StopActionSummary {
 export interface StopPosition extends Position { obtenidaDesdeGestya: boolean }
 export type StopNoticeResponse = ApiResponse<{
   message: string
+  estado?: 'CLIENTE_AVISADO'
   parada: StopActionSummary
-  notificacion: { tipo: string; canal: 'WHATSAPP'; estado: 'ENVIADO'; enviadoAt: string }
+  notificacion: NoticeResult
 }>
 export type StopDeliveredResponse = ApiResponse<{ message: string; parada: StopActionSummary & { posicion: StopPosition } }>
 export type StopNoDeliveryResponse = ApiResponse<{ message: string; parada: StopActionSummary & { posicion: StopPosition } }>

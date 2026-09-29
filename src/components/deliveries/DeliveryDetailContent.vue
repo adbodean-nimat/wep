@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { MapPin, Phone, User } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import type { DeliveryDetail, DocumentReference } from '@/types/wep'
-import { formatNumber, timeWindow } from '@/utils/formatters'
+import { formatNumber, mapAddress, timeWindow } from '@/utils/formatters'
 import DeliveryStatusBadge from './DeliveryStatusBadge.vue'
 const props = defineProps<{ delivery: DeliveryDetail }>()
 const document = (value: DocumentReference) => [value.division, value.tipo, value.numero].filter(v => v !== null && v !== '').join(' · ')
@@ -19,7 +19,7 @@ const rows = computed(() => [
   ['Observación entrega', props.delivery.observacionEntrega], ['Observaciones', props.delivery.observaciones],
 ].filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== ''))
 const phones = computed(() => [props.delivery.contacto.telefono, props.delivery.contacto.telefonoAlternativo].filter((p): p is string => !!p && /\d/.test(p)))
-const address = computed(() => [props.delivery.entrega.domicilio, props.delivery.entrega.localidad].filter(Boolean).join(', '))
+const address = computed(() => mapAddress(props.delivery.entrega.domicilio, props.delivery.entrega.localidad))
 </script>
 <template>
   <div class="space-y-5">

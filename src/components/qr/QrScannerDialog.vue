@@ -45,6 +45,7 @@ function cameraMessage(reason: unknown): string {
 
 function resolveMessage(reason: unknown): string {
   if (!(reason instanceof ApiError)) return 'Ocurrió un error al procesar el código QR.'
+  if (reason.code === 'ETA_NO_DISPONIBLE') return 'No pudimos calcular el tiempo estimado. Intentá nuevamente.'
   if (reason.status === 400) return 'El código QR no es válido.'
   if (reason.status === 404) return 'No se encontró una parada para este QR.'
   if (reason.status === 409) {
@@ -137,8 +138,13 @@ async function noticeClient(): Promise<void> {
   if (!resolved || !canNotice.value || state.value === 'noticing') return
   state.value = 'noticing'
   try {
-    await wepApi.stopNotice(resolved.viaje.id, resolved.parada.grupoId)
-    toast.success('Cliente avisado correctamente')
+    const response = await wepApi.stopNotice(resolved.viaje.id, resolved.parada.grupoId)
+    const eta = response.notificacion.etaMinutos
+    toast.success(typeof eta === 'number'
+      ? response.notificacion.precisionDestino === 'ZONA_APROXIMADA'
+        ? `Cliente avisado. Llegada aproximada a la zona: ${eta} min.`
+        : `Cliente avisado. Llegada estimada: ${eta} min.`
+      : 'Cliente avisado correctamente')
     emit('notice-success')
     state.value = 'resolved'
     await setOpen(false)
@@ -221,7 +227,7 @@ onBeforeUnmount(() => {
           <Button variant="outline" :disabled="state === 'noticing'" @click="setOpen(false)">Cerrar</Button>
           <Button :disabled="!canNotice || state === 'noticing'" @click="noticeClient">
             <LoaderCircle v-if="state === 'noticing'" class="animate-spin" aria-hidden="true" />
-            {{ state === 'noticing' ? 'Avisando…' : 'Avisar cliente' }}
+            {{ state === 'noticing' ? 'Calculando llegada…' : 'Avisar cliente' }}
           </Button>
         </template>
         <template v-else-if="state === 'error'">

@@ -8,7 +8,7 @@ import ErrorState from '@/components/app/ErrorState.vue'
 import LoadingState from '@/components/app/LoadingState.vue'
 import { wepApi } from '@/api/wep.api'
 import type { DeliveryDetail, WepStop } from '@/types/wep'
-import { errorMessage, formatNumber, timeWindow } from '@/utils/formatters'
+import { errorMessage, formatNumber, mapAddress, timeWindow } from '@/utils/formatters'
 
 const props = defineProps<{ stop: WepStop }>()
 const open = ref(false)
@@ -22,7 +22,7 @@ function unique(values: Array<string | null>): string[] {
 }
 
 const phones = computed(() => unique(details.value.flatMap(detail => [detail.contacto.telefono, detail.contacto.telefonoAlternativo])).filter(phone => /\d/.test(phone)))
-const address = computed(() => [props.stop.domicilio, props.stop.localidad].filter(Boolean).join(', '))
+const address = computed(() => mapAddress(props.stop.domicilio, props.stop.localidad))
 const rows = computed(() => {
   const zones = unique(details.value.map(detail => [detail.entrega.zonaCodigo, detail.entrega.zonaNombre].filter(Boolean).join(' · ')))
   const emails = unique(details.value.map(detail => detail.contacto.email))

@@ -1,37 +1,39 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
-import { CalendarClock, CircleCheck, CircleX, Navigation, PackageCheck, Truck } from '@lucide/vue'
+import { CalendarClock, CircleAlert, CircleCheck, CircleX, Navigation, PackageCheck, Truck } from '@lucide/vue'
 import type { PublicTrackingStatus } from '@/types/publicTracking'
+import { getPublicEtaLabel, getPublicStatusDescription, getPublicStatusTitle, getPublicTrackingState, type PublicTrackingState } from '@/utils/publicTrackingPresentation'
 
-const props = defineProps<{ status: PublicTrackingStatus }>()
+const props = defineProps<{ status: PublicTrackingStatus; etaMinutos?: number }>()
 
-interface StatusPresentation {
-  title: string
-  description: string
+interface StatusAppearance {
   icon: Component
   tone: string
 }
 
-const presentations: Record<PublicTrackingStatus, StatusPresentation> = {
-  PROGRAMADA: { title: 'Tu entrega está programada', description: 'Estamos preparando todo para la fecha acordada.', icon: CalendarClock, tone: 'bg-emerald-50 text-primary' },
-  ASIGNADA: { title: 'Tu entrega está programada', description: 'Estamos preparando todo para la fecha acordada.', icon: CalendarClock, tone: 'bg-emerald-50 text-primary' },
-  EN_REPARTO: { title: 'Tu entrega se encuentra en reparto', description: 'Tu pedido ya salió a reparto.', icon: Truck, tone: 'bg-blue-50 text-blue-700' },
-  CLIENTE_AVISADO: { title: 'Tu entrega está en camino', description: 'El vehículo está realizando el recorrido de entrega.', icon: Navigation, tone: 'bg-blue-50 text-blue-700' },
-  ENTREGADA: { title: 'Tu entrega fue realizada', description: 'Tu entrega fue realizada correctamente.', icon: CircleCheck, tone: 'bg-emerald-50 text-emerald-700' },
-  NO_ENTREGADA: { title: 'No pudimos completar la entrega', description: 'La entrega no pudo realizarse en esta oportunidad.', icon: CircleX, tone: 'bg-red-50 text-red-700' },
-  CANCELADA: { title: 'La entrega fue cancelada', description: 'Esta entrega ya no se encuentra programada.', icon: CircleX, tone: 'bg-slate-100 text-slate-700' },
-  CERRADA_PARCIAL: { title: 'La entrega fue procesada parcialmente', description: 'Parte de la entrega pudo ser completada.', icon: PackageCheck, tone: 'bg-amber-50 text-amber-800' },
+const appearances: Record<PublicTrackingState, StatusAppearance> = {
+  PROGRAMADA: { icon: CalendarClock, tone: 'bg-emerald-50 text-primary' },
+  EN_CAMINO: { icon: Truck, tone: 'bg-blue-50 text-blue-700' },
+  PROXIMA: { icon: Navigation, tone: 'bg-blue-50 text-blue-700' },
+  ENTREGADA: { icon: CircleCheck, tone: 'bg-emerald-50 text-emerald-700' },
+  NO_ENTREGADA: { icon: CircleAlert, tone: 'bg-red-50 text-red-700' },
+  CANCELADA: { icon: CircleX, tone: 'bg-slate-100 text-slate-700' },
+  PARCIAL: { icon: PackageCheck, tone: 'bg-amber-50 text-amber-800' },
 }
 
-const presentation = computed(() => presentations[props.status])
+const appearance = computed(() => appearances[getPublicTrackingState(props.status)])
+const title = computed(() => getPublicStatusTitle(props.status))
+const description = computed(() => getPublicStatusDescription(props.status))
+const etaLabel = computed(() => getPublicEtaLabel(props.status, props.etaMinutos))
 </script>
 
 <template>
   <section class="rounded-3xl border bg-white p-6 shadow-sm" aria-live="polite">
-    <div class="flex size-14 items-center justify-center rounded-2xl" :class="presentation.tone">
-      <component :is="presentation.icon" :size="30" stroke-width="2" aria-hidden="true" />
+    <div class="flex size-14 items-center justify-center rounded-2xl" :class="appearance.tone">
+      <component :is="appearance.icon" :size="30" stroke-width="2" aria-hidden="true" />
     </div>
-    <h1 class="mt-5 text-2xl font-bold leading-tight text-foreground">{{ presentation.title }}</h1>
-    <p class="mt-2 text-base leading-relaxed text-muted-foreground">{{ presentation.description }}</p>
+    <h1 class="mt-5 text-2xl font-bold leading-tight text-foreground">{{ title }}</h1>
+    <p class="mt-2 text-base leading-relaxed text-muted-foreground">{{ description }}</p>
+    <p v-if="etaLabel" class="mt-5 rounded-2xl bg-blue-50 px-4 py-3 text-lg font-bold leading-snug text-blue-800">{{ etaLabel }}</p>
   </section>
 </template>

@@ -1,5 +1,5 @@
 import { ApiError, isRecord, request } from './http'
-import type { PublicTracking, PublicTrackingResponse, PublicTrackingStatus } from '@/types/publicTracking'
+import type { PublicTracking, PublicTrackingStatus } from '@/types/publicTracking'
 
 const statuses = new Set<PublicTrackingStatus>([
   'PROGRAMADA',
@@ -51,5 +51,19 @@ export async function getPublicTracking(publicId: string, signal?: AbortSignal):
   if (!isRecord(data) || data.ok !== true || !isPublicTracking(data.tracking)) {
     throw new ApiError('La respuesta de WEP no tiene el formato esperado.', 502)
   }
-  return (data as PublicTrackingResponse).tracking
+  const source = data.tracking as PublicTracking
+  const eta = source.etaMinutos
+  // Sólo conservamos los campos del contrato público, incluso si la API agrega datos.
+  return {
+    estado: { codigo: source.estado.codigo, nombre: source.estado.nombre },
+    fechaEntrega: source.fechaEntrega,
+    horario: { desde: source.horario.desde, hasta: source.horario.hasta },
+    destino: { localidad: source.destino.localidad },
+    ultimaActualizacion: source.ultimaActualizacion,
+    viaje: { enCurso: source.viaje.enCurso },
+    vehiculo: source.vehiculo.posicionDisponible
+      ? { posicionDisponible: true, latitud: source.vehiculo.latitud, longitud: source.vehiculo.longitud, fechaPosicion: source.vehiculo.fechaPosicion }
+      : { posicionDisponible: false },
+    ...(typeof eta === 'number' && Number.isSafeInteger(eta) && eta >= 0 ? { etaMinutos: eta } : {}),
+  }
 }

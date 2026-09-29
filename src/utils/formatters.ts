@@ -22,6 +22,14 @@ export function timeWindow(from: string | null, to: string | null): string {
 export function formatNumber(value: number): string {
   return new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 }).format(value)
 }
+export function mapAddress(street: string | null, locality: string | null): string {
+  const cleanLocality = locality?.replace(/^\s*\d+\s*,\s*/, '').trim()
+  const parts = [street?.trim(), cleanLocality, 'Concordia', 'Entre Ríos', 'Argentina']
+    .filter((value): value is string => !!value)
+  return parts.filter((value, index) => (
+    parts.findIndex(part => part.localeCompare(value, 'es', { sensitivity: 'base' }) === 0) === index
+  )).join(', ')
+}
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Ocurrió un error inesperado. Intentá de nuevo.'
 }

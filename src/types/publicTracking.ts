@@ -9,6 +9,7 @@ export type PublicTrackingStatus =
   | 'CERRADA_PARCIAL'
 
 export interface PublicTracking {
+  etaMinutos?: number
   estado: {
     codigo: PublicTrackingStatus
     nombre: string

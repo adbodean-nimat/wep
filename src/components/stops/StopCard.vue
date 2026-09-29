@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Clock, FileText, MapPin, Package } from '@lucide/vue'
+import { computed, ref, watch } from 'vue'
+import { Clock, FileText, MapPin, MessageSquareText, Package } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import DeliveryStatusBadge from '@/components/deliveries/DeliveryStatusBadge.vue'
@@ -9,8 +10,10 @@ import StopInfoDialog from './StopInfoDialog.vue'
 import type { NoDeliveryReason, WepStop, WepStopDelivery } from '@/types/wep'
 import { formatNumber, timeWindow } from '@/utils/formatters'
 import { reasonLabels } from '@/utils/deliveries'
+import { wepApi } from '@/api/wep.api'
+import type { DeliveryDetail } from '@/types/wep'
 
-defineProps<{
+const props = defineProps<{
   stop: WepStop
   sequence: number
   reorder: boolean
@@ -20,6 +23,35 @@ defineProps<{
   disabled: boolean
   reasons: Record<number, NoDeliveryReason>
 }>()
+
+const details = ref<Map<number, DeliveryDetail>>(new Map())
+const phone = computed(() => [...details.value.values()]
+  .flatMap(detail => [detail.contacto.telefono, detail.contacto.telefonoAlternativo])
+  .map(value => value?.replace(/[^+\d]/g, '') ?? '')
+  .find(value => /\d/.test(value)) || null)
+const observations = computed(() => [...new Set(props.stop.entregas.flatMap(delivery => {
+  const detail = delivery.id === null ? undefined : details.value.get(delivery.id)
+  return [
+    delivery.observaciones === undefined ? detail?.observaciones : delivery.observaciones,
+    delivery.observacionEntrega === undefined ? detail?.observacionEntrega : delivery.observacionEntrega,
+  ]
+}).map(value => value?.trim()).filter((value): value is string => !!value))].join('\n'))
+
+watch(() => [props.stop.entregas, props.inProgress, props.stop.estado.codigo] as const, async ([deliveries, inProgress, status], _, onCleanup) => {
+  details.value = new Map()
+  const ids = deliveries
+    .filter(delivery => delivery.id !== null && ((inProgress && status === 'EN_REPARTO') || delivery.observaciones === undefined || delivery.observacionEntrega === undefined))
+    .map(delivery => delivery.id as number)
+  if (!ids.length) return
+  const controller = new AbortController()
+  onCleanup(() => controller.abort())
+  const results = await Promise.allSettled(ids.map(id => wepApi.delivery(id, controller.signal)))
+  if (controller.signal.aborted) return
+  details.value = new Map(results.flatMap((result, index) => result.status === 'fulfilled'
+    ? [[ids[index]!, result.value.entrega] as const]
+    : []))
+}, { immediate: true })
+
 defineEmits<{
   move: [offset: -1 | 1]
   notice: []
@@ -43,9 +75,10 @@ function documentNumber(value: WepStopDelivery['ordenPreparacion']): string {
       <p class="flex items-center gap-2"><Package :size="18" aria-hidden="true" class="text-muted-foreground" />{{ formatNumber(stop.totales.bultos) }} bultos</p>
       <p class="flex items-center gap-2"><FileText :size="18" aria-hidden="true" class="text-muted-foreground" />{{ stop.cantidadOrdenes }} {{ stop.cantidadOrdenes === 1 ? 'orden' : 'órdenes' }}</p>
       <p v-if="timeWindow(stop.horaDesde, stop.horaHasta)" class="flex items-center gap-2"><Clock :size="18" aria-hidden="true" class="text-muted-foreground" />{{ timeWindow(stop.horaDesde, stop.horaHasta) }}</p>
+      <div v-if="observations" class="flex items-start gap-2"><MessageSquareText :size="18" class="shrink-0 text-muted-foreground" aria-hidden="true" /><div class="min-w-0"><p class="font-medium">Observaciones</p><p class="whitespace-pre-wrap break-words">{{ observations }}</p></div></div>
     </div>
 
-    <StopActions :stop="stop" :in-progress="inProgress" :disabled="disabled" @notice="$emit('notice')" @deliver="$emit('deliver')" @no-delivery="$emit('noDelivery')" />
+    <StopActions :stop="stop" :in-progress="inProgress" :disabled="disabled" :phone="phone" @notice="$emit('notice')" @deliver="$emit('deliver')" @no-delivery="$emit('noDelivery')" />
     <div class="mt-4 grid grid-cols-2 gap-2">
       <Dialog>
         <Button as-child variant="secondary" class="w-full"><DialogTrigger><FileText aria-hidden="true" /> Ver órdenes</DialogTrigger></Button>

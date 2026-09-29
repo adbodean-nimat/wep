@@ -1,7 +1,7 @@
 import { clearSession, getToken } from '@/auth/wepAuth'
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(message: string, public readonly status: number, public readonly code?: string) {
     super(message)
     this.name = 'ApiError'
   }
@@ -57,7 +57,8 @@ export async function request(path: string, options: RequestOptions = {}): Promi
       ? payload.message : response.status === 401
         ? 'Tu sesión venció. Ingresá nuevamente.'
         : `No se pudo completar la operación (HTTP ${response.status}).`
-    throw new ApiError(message, response.status)
+    const code = isRecord(payload) && typeof payload.code === 'string' ? payload.code : undefined
+    throw new ApiError(message, response.status, code)
   }
   if (payload === null && response.status !== 204) {
     throw new ApiError('WEP devolvió una respuesta no válida.', response.status)
