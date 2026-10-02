@@ -77,13 +77,14 @@ onBeforeUnmount(() => {
   <TrackingErrorState v-else-if="errorStatus !== null" :not-found="errorStatus === 404" @retry="loadTracking" />
 
   <div v-else-if="tracking" class="space-y-4">
-    <TrackingStatusCard :status="tracking.estado.codigo" :eta-minutos="tracking.etaMinutos" />
+    <TrackingStatusCard :status="tracking.estado.codigo" :eta-minutos="tracking.etaMinutos" :pedido-principal="tracking.pedido.principal" />
     <TrackingProgress :status="tracking.estado.codigo" />
     <TrackingMap
       v-if="showMap && tracking.vehiculo.posicionDisponible"
       :latitud="tracking.vehiculo.latitud"
       :longitud="tracking.vehiculo.longitud"
       :fecha-posicion="tracking.vehiculo.fechaPosicion"
+      :ruta="tracking.ruta"
     />
     <p
       v-else-if="showMap"
@@ -92,7 +93,7 @@ onBeforeUnmount(() => {
     >
       Ubicación del vehículo temporalmente no disponible.
     </p>
-    <TrackingSchedule :fecha-entrega="tracking.fechaEntrega" :horario="tracking.horario" :destino="tracking.destino" />
+    <TrackingSchedule :fecha-entrega="tracking.fechaEntrega" :horario="tracking.horario" :destino="tracking.destino" :pedido="tracking.pedido" />
     <div class="flex items-center justify-between gap-4 px-1 pt-2">
       <p v-if="lastUpdate" class="text-xs text-muted-foreground">Última actualización: {{ lastUpdate }}</p>
       <span v-else />

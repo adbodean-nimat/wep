@@ -1,5 +1,6 @@
 import type { PublicTrackingStatus } from '@/types/publicTracking'
 import { formatNumber } from '@/utils/formatters'
+import { formatOrderNumber } from '@/utils/publicTrackingFormatters'
 
 export type PublicTrackingState = 'PROGRAMADA' | 'EN_CAMINO' | 'PROXIMA' | 'ENTREGADA' | 'NO_ENTREGADA' | 'CANCELADA' | 'PARCIAL'
 
@@ -33,7 +34,19 @@ export function getPublicProgressStep(status: PublicTrackingStatus): number | nu
   }
 }
 
-export function getPublicStatusTitle(status: PublicTrackingStatus): string {
+export function getPublicStatusTitle(status: PublicTrackingStatus, pedidoPrincipal?: string | null): string {
+  if (pedidoPrincipal) {
+    const pedido = formatOrderNumber(pedidoPrincipal)
+    switch (getPublicTrackingState(status)) {
+      case 'PROGRAMADA': return `Tu pedido ${pedido} está programado`
+      case 'EN_CAMINO': return `Tu pedido ${pedido} está en camino`
+      case 'PROXIMA': return `Tu pedido ${pedido} está próximo a llegar`
+      case 'ENTREGADA': return `Tu pedido ${pedido} fue entregado`
+      case 'NO_ENTREGADA': return `No pudimos entregar tu pedido ${pedido}`
+      case 'CANCELADA': return `Tu pedido ${pedido} fue cancelado`
+      case 'PARCIAL': return `Tu pedido ${pedido} fue parcialmente entregado`
+    }
+  }
   switch (getPublicTrackingState(status)) {
     case 'PROGRAMADA': return 'Tu entrega está programada'
     case 'EN_CAMINO': return 'Tu entrega está en camino'

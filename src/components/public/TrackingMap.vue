@@ -5,11 +5,13 @@ import 'leaflet/dist/leaflet.css'
 import { ArrowLeft, Maximize2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { formatPublicTime } from '@/utils/publicTrackingFormatters'
+import type { PublicTracking } from '@/types/publicTracking'
 
 const props = defineProps<{
   latitud: number
   longitud: number
   fechaPosicion: string | null
+  ruta: PublicTracking['ruta']
 }>()
 
 const mapElement = ref<HTMLElement | null>(null)
@@ -17,20 +19,46 @@ const sectionElement = ref<HTMLElement | null>(null)
 const isExpanded = ref(false)
 let map: L.Map | undefined
 let marker: L.Marker | undefined
+let destinationMarker: L.Marker | undefined
+let routeLayer: L.Polyline | undefined
 let mapResizeObserver: ResizeObserver | undefined
 let previousBodyOverflow = ''
 
 const vehicleIcon = L.divIcon({
   className: 'vehicle-marker',
-  iconSize: [36, 36],
-  iconAnchor: [18, 18],
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
 })
+const destinationIcon = L.divIcon({
+  className: 'destination-marker',
+  html: '<span aria-hidden="true">📍</span>',
+  iconSize: [30, 36],
+  iconAnchor: [15, 33],
+})
+
+function syncRoute() {
+  if (!map || routeLayer) return
+  const destination = props.ruta.destino
+  if (destination && !destinationMarker) {
+    destinationMarker = L.marker([destination.latitud, destination.longitud], {
+      icon: destinationIcon, keyboard: false,
+    }).addTo(map)
+  }
+  const coordinates = props.ruta.disponible ? props.ruta.geometry?.coordinates : undefined
+  if (!coordinates) return
+  routeLayer = L.polyline(coordinates.map(([longitude, latitude]) => [latitude, longitude]), {
+    color: '#176d51', weight: 5, opacity: 0.85,
+  }).addTo(map)
+  const bounds = routeLayer.getBounds()
+  if (marker) bounds.extend(marker.getLatLng())
+  if (destinationMarker) bounds.extend(destinationMarker.getLatLng())
+  map.fitBounds(bounds, { padding: [28, 28], maxZoom: 15, animate: false })
+}
 
 async function refreshMapSize() {
   await nextTick()
   requestAnimationFrame(() => {
     map?.invalidateSize({ pan: false, animate: false })
-    if (map && marker) map.setView(marker.getLatLng(), map.getZoom(), { animate: false })
   })
 }
 
@@ -84,6 +112,7 @@ onMounted(() => {
     maxZoom: 19,
   }).addTo(map)
   marker = L.marker(position, { icon: vehicleIcon, keyboard: false }).addTo(map)
+  syncRoute()
   mapResizeObserver = new ResizeObserver(() => {
     map?.invalidateSize({ pan: false, animate: false })
   })
@@ -94,12 +123,12 @@ watch(
   () => [props.latitud, props.longitud] as const,
   ([latitud, longitud]) => {
     if (!map || !marker) return
-    const previous = marker.getLatLng()
     const next = L.latLng(latitud, longitud)
     marker.setLatLng(next)
-    if (previous.distanceTo(next) >= 25) map.panTo(next)
   },
 )
+
+watch(() => props.ruta, syncRoute)
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
@@ -107,6 +136,8 @@ onBeforeUnmount(() => {
   mapResizeObserver?.disconnect()
   map?.remove()
   marker = undefined
+  destinationMarker = undefined
+  routeLayer = undefined
   map = undefined
 })
 </script>
@@ -118,64 +149,35 @@ onBeforeUnmount(() => {
     :class="isExpanded ? 'fixed inset-0 z-[1000] flex flex-col' : 'rounded-2xl'"
     aria-label="Ubicación actual del vehículo"
   >
-    <header class="mb-4 flex items-start justify-between gap-3">
-      <div>
-        <h2 class="text-sm font-semibold">Ubicación del vehículo</h2>
+    <header class="mb-3 flex items-start justify-between gap-3">
+      <div class="min-w-0">
+        <h2 class="text-base font-semibold leading-snug">{{ ruta.disponible ? 'Ruta estimada hacia tu entrega' : 'Ubicación del vehículo' }}</h2>
         <p class="mt-1 text-xs text-muted-foreground" role="status">{{ positionLabel }}</p>
       </div>
-      <Button v-if="isExpanded" size="sm" variant="outline" @click="collapseMap">
+      <Button v-if="isExpanded" size="sm" variant="outline" class="shrink-0" @click="collapseMap">
         <ArrowLeft aria-hidden="true" /> Volver
-      </Button>
-      <Button v-else size="sm" variant="outline" @click="expandMap">
-        <Maximize2 aria-hidden="true" /> Ver mapa completo
       </Button>
     </header>
     <div class="overflow-hidden rounded-xl" :class="isExpanded ? 'min-h-0 flex-1' : 'h-[250px] sm:h-[280px]'">
       <div ref="mapElement" class="h-full w-full" />
+    </div>
+    <div class="mt-3 flex flex-col gap-3">
+      <p v-if="ruta.disponible" class="text-xs leading-relaxed text-muted-foreground">
+        El recorrido puede variar según las condiciones del tránsito y la operación.
+      </p>
+      <Button v-if="!isExpanded" size="sm" variant="outline" class="w-full sm:w-auto sm:self-end" @click="expandMap">
+        <Maximize2 aria-hidden="true" /> Ver mapa completo
+      </Button>
     </div>
   </section>
 </template>
 
 <style scoped>
 :deep(.vehicle-marker) {
-  background: transparent;
+  background: var(--primary);
   border: 0;
   border-radius: 50%;
-}
-
-:deep(.vehicle-marker::before) {
-  background: var(--primary);
-  border-radius: 50%;
   box-shadow: 0 2px 7px rgb(0 0 0 / 20%);
-  content: '';
-  height: 18px;
-  left: 50%;
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 18px;
 }
-
-:deep(.vehicle-marker::after) {
-  animation: vehicle-border-pulse 1.8s ease-in-out infinite;
-  border: 2px solid rgb(20 92 67 / 50%);
-  border-radius: 50%;
-  box-sizing: border-box;
-  content: '';
-  inset: 0;
-  pointer-events: none;
-  position: absolute;
-}
-
-@keyframes vehicle-border-pulse {
-  0%, 100% { border-width: 2px; opacity: 0.45; }
-  50% { border-width: 4px; opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :deep(.vehicle-marker::after) {
-    animation: none;
-    opacity: 1;
-  }
-}
+:deep(.destination-marker) { background: transparent; border: 0; font-size: 27px; line-height: 36px; text-align: center; }
 </style>

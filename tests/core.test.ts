@@ -121,7 +121,7 @@ describe('Cliente HTTP', () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(payload)))
     vi.stubGlobal('fetch', fetchMock)
 
-    await expect(getPublicTracking('abcXYZ_123-abcdefghijkl')).resolves.toEqual(payload.tracking)
+    await expect(getPublicTracking('abcXYZ_123-abcdefghijkl')).resolves.toEqual({ ...payload.tracking, pedido: { principal: null, otros: [] }, ruta: { disponible: false } })
     expect(fetchMock.mock.calls[0]![0]).toBe('/api/wep/public/tracking/abcXYZ_123-abcdefghijkl')
     expect(new Headers(fetchMock.mock.calls[0]![1]!.headers).has('Authorization')).toBe(false)
   })
@@ -153,6 +153,22 @@ describe('Cliente HTTP', () => {
       expect(tracking.etaMinutos).toBe(expected)
       expect(JSON.stringify(tracking)).not.toContain('DATO INTERNO')
     }
+  })
+  it('conserva la ruta GeoJSON pública sin filtrar campos internos', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', '/api/wep')
+    const geometry = { type: 'LineString', coordinates: [[-58, -31], [-58.1, -31.2]] }
+    const tracking = {
+      estado: { codigo: 'CLIENTE_AVISADO', nombre: 'Cliente avisado' },
+      fechaEntrega: null, horario: { desde: null, hasta: null },
+      destino: { localidad: 'CONCORDIA' }, ultimaActualizacion: null,
+      viaje: { enCurso: true }, vehiculo: { posicionDisponible: false },
+      ruta: { disponible: true, geometry, destino: { latitud: -31.2, longitud: -58.1 }, proveedor: 'secreto' },
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, tracking }))))
+    const result = await getPublicTracking('abcdefghijklmnopqrstuv')
+    expect(result.ruta.geometry).toEqual(geometry)
+    expect(result.ruta.destino).toEqual({ latitud: -31.2, longitud: -58.1 })
+    expect(JSON.stringify(result)).not.toContain('secreto')
   })
   it('limpia la sesión cuando un endpoint protegido responde 401', async () => {
     vi.stubEnv('VITE_API_BASE_URL', '/api/wep')

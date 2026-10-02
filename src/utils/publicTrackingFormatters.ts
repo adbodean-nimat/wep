@@ -1,5 +1,9 @@
 const ARGENTINA_TIME_ZONE = 'America/Argentina/Buenos_Aires'
 
+export function formatOrderNumber(value: string): string {
+  return `#${value}`
+}
+
 const argentinaTimeFormatter = new Intl.DateTimeFormat('es-AR', {
   hour: '2-digit',
   minute: '2-digit',

@@ -4,7 +4,7 @@ import { CalendarClock, CircleAlert, CircleCheck, CircleX, Navigation, PackageCh
 import type { PublicTrackingStatus } from '@/types/publicTracking'
 import { getPublicEtaLabel, getPublicStatusDescription, getPublicStatusTitle, getPublicTrackingState, type PublicTrackingState } from '@/utils/publicTrackingPresentation'
 
-const props = defineProps<{ status: PublicTrackingStatus; etaMinutos?: number }>()
+const props = defineProps<{ status: PublicTrackingStatus; etaMinutos?: number; pedidoPrincipal?: string | null }>()
 
 interface StatusAppearance {
   icon: Component
@@ -22,7 +22,7 @@ const appearances: Record<PublicTrackingState, StatusAppearance> = {
 }
 
 const appearance = computed(() => appearances[getPublicTrackingState(props.status)])
-const title = computed(() => getPublicStatusTitle(props.status))
+const title = computed(() => getPublicStatusTitle(props.status, props.pedidoPrincipal))
 const description = computed(() => getPublicStatusDescription(props.status))
 const etaLabel = computed(() => getPublicEtaLabel(props.status, props.etaMinutos))
 </script>

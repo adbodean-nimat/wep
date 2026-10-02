@@ -161,6 +161,9 @@ function confirmStop(stop: WepStop, kind: 'notice' | 'deliver') {
     : { title: '¿Confirmar la parada completa?', description: `${description}\nSe marcarán como entregadas ${stop.cantidadOrdenes} órdenes.`, label: 'Confirmar entrega', run: () => wepApi.stopDeliver(tripId, stop.grupoId), success: 'Parada entregada correctamente' }
 }
 function noticeSuccess(result: StopNoticeResponse): string {
+  if (result.notificacion.resultado === 'YA_NOTIFICADA') {
+    return 'Esta parada ya tenía un aviso enviado. No se envió un nuevo WhatsApp.'
+  }
   const eta = result.notificacion.etaMinutos
   return typeof eta === 'number'
     ? result.notificacion.precisionDestino === 'ZONA_APROXIMADA'

@@ -24,8 +24,11 @@ function stepState(index: number): 'completo' | 'actual' | 'pendiente' {
           class="absolute -bottom-4 left-[17px] top-9 w-0.5"
           :class="stepState(index + 1) === 'pendiente' ? 'bg-border' : 'bg-primary'"
           aria-hidden="true" />
-        <span class="flex size-9 shrink-0 items-center justify-center rounded-full border-2"
-          :class="stepState(index) === 'pendiente' ? 'border-border text-muted-foreground' : 'border-primary text-primary'"
+        <span class="relative flex size-9 shrink-0 items-center justify-center rounded-full border-2"
+          :class="[
+            stepState(index) === 'pendiente' ? 'border-border text-muted-foreground' : 'border-primary text-primary',
+            stepState(index) === 'actual' ? 'progress-step-current' : '',
+          ]"
           aria-hidden="true">
           <Check v-if="stepState(index) === 'completo'" :size="19" stroke-width="3" />
           <Circle v-else :size="11" :fill="stepState(index) === 'actual' ? 'currentColor' : 'none'" />
@@ -36,3 +39,31 @@ function stepState(index: number): 'completo' | 'actual' | 'pendiente' {
     </ol>
   </section>
 </template>
+
+<style scoped>
+.progress-step-current::after {
+  animation: progress-border-pulse 1.8s ease-out infinite;
+  border: 3px solid rgb(20 92 67 / 85%);
+  border-radius: 50%;
+  box-sizing: border-box;
+  content: '';
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+@keyframes progress-border-pulse {
+  0% { opacity: 0; transform: scale(1); }
+  12% { opacity: 1; }
+  65% { opacity: 0.7; }
+  100% { opacity: 0; transform: scale(1.45); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-step-current::after {
+    animation: none;
+    opacity: 0.8;
+    transform: scale(1.15);
+  }
+}
+</style>

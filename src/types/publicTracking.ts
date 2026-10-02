@@ -9,6 +9,10 @@ export type PublicTrackingStatus =
   | 'CERRADA_PARCIAL'
 
 export interface PublicTracking {
+  pedido: {
+    principal: string | null
+    otros: string[]
+  }
   etaMinutos?: number
   estado: {
     codigo: PublicTrackingStatus
@@ -21,6 +25,14 @@ export interface PublicTracking {
   }
   destino: {
     localidad: string | null
+  }
+  ruta: {
+    disponible: boolean
+    geometry?: { type: 'LineString'; coordinates: [number, number][] }
+    distanciaMetros?: number
+    duracionSegundos?: number
+    generadaAt?: string | null
+    destino?: { latitud: number; longitud: number }
   }
   ultimaActualizacion: string | null
   viaje: {

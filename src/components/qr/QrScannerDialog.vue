@@ -45,6 +45,7 @@ function cameraMessage(reason: unknown): string {
 
 function resolveMessage(reason: unknown): string {
   if (!(reason instanceof ApiError)) return 'Ocurrió un error al procesar el código QR.'
+  if (reason.code === 'PEDIDO_NO_DISPONIBLE' || reason.code === 'AVISO_NO_CONFIRMADO') return reason.message
   if (reason.code === 'ETA_NO_DISPONIBLE') return 'No pudimos calcular el tiempo estimado. Intentá nuevamente.'
   if (reason.status === 400) return 'El código QR no es válido.'
   if (reason.status === 404) return 'No se encontró una parada para este QR.'
@@ -140,7 +141,9 @@ async function noticeClient(): Promise<void> {
   try {
     const response = await wepApi.stopNotice(resolved.viaje.id, resolved.parada.grupoId)
     const eta = response.notificacion.etaMinutos
-    toast.success(typeof eta === 'number'
+    toast.success(response.notificacion.resultado === 'YA_NOTIFICADA'
+      ? 'Esta parada ya tenía un aviso enviado. No se envió un nuevo WhatsApp.'
+      : typeof eta === 'number'
       ? response.notificacion.precisionDestino === 'ZONA_APROXIMADA'
         ? `Cliente avisado. Llegada aproximada a la zona: ${eta} min.`
         : `Cliente avisado. Llegada estimada: ${eta} min.`
