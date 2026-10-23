@@ -6,6 +6,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/chofer' },
+    { path: '/s', name: 'public-tracking-lookup', component: () => import('@/views/public/TrackingLookupView.vue'), meta: { public: true } },
     { path: '/s/:publicId', name: 'public-tracking', component: () => import('@/views/public/TrackingView.vue'), meta: { public: true } },
     { path: '/chofer', redirect: '/chofer/viajes' },
     { path: '/chofer/login', name: 'driver-login', component: () => import('@/views/driver/LoginView.vue') },

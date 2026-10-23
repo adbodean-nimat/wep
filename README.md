@@ -2,6 +2,12 @@
 
 PWA mobile-first de WhatsApp Entregas Programadas. Permite consultar las vueltas del día, ordenar paradas, iniciar reparto, solicitar el aviso al cliente, registrar entregas/no entregas y finalizar la vuelta. Toda operación consume la API Express WEP. No accede a bases de datos, GESTYA ni WhatsApp directamente.
 
+## Consulta pública por pedido
+
+La página `/s` permite buscar una entrega por número de pedido y los últimos
+cuatro dígitos del teléfono registrado. Ver [contrato, disponibilidad de tokens,
+privacidad y pruebas](docs/public-tracking-lookup.md).
+
 ## Estado e integración con el backend
 
 Los contratos se verificaron **leyendo, sin modificar**, `C:\Users\abodean\restapi-nodejs\server\src\modules\wep`:
