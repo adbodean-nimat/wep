@@ -6,7 +6,7 @@ import WhatsAppIcon from '@/components/ui/WhatsAppIcon.vue'
 import type { WepStop } from '@/types/wep'
 import { mapAddress } from '@/utils/formatters'
 
-const props = defineProps<{ stop: WepStop; inProgress: boolean; disabled: boolean; phone: string | null }>()
+const props = defineProps<{ stop: WepStop; inProgress: boolean; disabled: boolean; phone: string | null; contactLoading?: boolean; contactError?: boolean }>()
 defineEmits<{ notice: []; deliver: []; noDelivery: [] }>()
 const operational = computed(() => props.inProgress && ['EN_REPARTO', 'CLIENTE_AVISADO'].includes(props.stop.estado.codigo))
 const address = computed(() => mapAddress(props.stop.domicilio, props.stop.localidad))
@@ -15,7 +15,9 @@ const address = computed(() => mapAddress(props.stop.domicilio, props.stop.local
 <template>
   <div v-if="operational" class="mt-4 space-y-2 border-t pt-4">
     <div v-if="stop.estado.codigo === 'EN_REPARTO'" class="space-y-2">
-      <Button variant="secondary" class="w-full" :disabled="disabled" @click="$emit('notice')"><WhatsAppIcon /> Avisar cliente</Button>
+      <Button variant="secondary" class="w-full" :disabled="disabled || contactLoading || !phone" @click="$emit('notice')"><WhatsAppIcon /> Avisar cliente</Button>
+      <p v-if="contactLoading" role="status" class="text-sm text-muted-foreground">Consultando teléfonos…</p>
+      <p v-else-if="!phone" role="status" class="text-sm text-muted-foreground">{{ contactError ? 'No pudimos consultar los teléfonos. Actualizá la vuelta para reintentar.' : 'Sin teléfono principal ni alternativo. No se puede enviar el aviso. Solicitá que se cargue un teléfono y actualizá la vuelta.' }}</p>
       <Button v-if="phone && !disabled" as-child variant="outline" class="w-full"><a :href="`tel:${phone}`"><Phone aria-hidden="true" /> Llamar</a></Button>
       <Button v-else variant="outline" class="w-full" disabled :title="phone ? undefined : 'No hay un teléfono disponible para esta parada'"><Phone aria-hidden="true" /> Llamar</Button>
     </div>

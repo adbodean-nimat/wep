@@ -25,6 +25,8 @@ const props = defineProps<{
 }>()
 
 const details = ref<Map<number, DeliveryDetail>>(new Map())
+const contactLoading = ref(false)
+const contactError = ref(false)
 const phone = computed(() => [...details.value.values()]
   .flatMap(detail => [detail.contacto.telefono, detail.contacto.telefonoAlternativo])
   .map(value => value?.replace(/[^+\d]/g, '') ?? '')
@@ -39,14 +41,19 @@ const observations = computed(() => [...new Set(props.stop.entregas.flatMap(deli
 
 watch(() => [props.stop.entregas, props.inProgress, props.stop.estado.codigo] as const, async ([deliveries, inProgress, status], _, onCleanup) => {
   details.value = new Map()
+  contactLoading.value = false
+  contactError.value = false
   const ids = deliveries
     .filter(delivery => delivery.id !== null && ((inProgress && status === 'EN_REPARTO') || delivery.observaciones === undefined || delivery.observacionEntrega === undefined))
     .map(delivery => delivery.id as number)
   if (!ids.length) return
+  contactLoading.value = true
   const controller = new AbortController()
   onCleanup(() => controller.abort())
   const results = await Promise.allSettled(ids.map(id => wepApi.delivery(id, controller.signal)))
   if (controller.signal.aborted) return
+  contactLoading.value = false
+  contactError.value = results.some(result => result.status === 'rejected')
   details.value = new Map(results.flatMap((result, index) => result.status === 'fulfilled'
     ? [[ids[index]!, result.value.entrega] as const]
     : []))
@@ -78,7 +85,7 @@ function documentNumber(value: WepStopDelivery['ordenPreparacion']): string {
       <div v-if="observations" class="flex items-start gap-2"><MessageSquareText :size="18" class="shrink-0 text-muted-foreground" aria-hidden="true" /><div class="min-w-0"><p class="font-medium">Observaciones</p><p class="whitespace-pre-wrap break-words">{{ observations }}</p></div></div>
     </div>
 
-    <StopActions :stop="stop" :in-progress="inProgress" :disabled="disabled" :phone="phone" @notice="$emit('notice')" @deliver="$emit('deliver')" @no-delivery="$emit('noDelivery')" />
+    <StopActions :stop="stop" :in-progress="inProgress" :disabled="disabled" :phone="phone" :contact-loading="contactLoading" :contact-error="contactError" @notice="$emit('notice')" @deliver="$emit('deliver')" @no-delivery="$emit('noDelivery')" />
     <div class="mt-4 grid grid-cols-2 gap-2">
       <Dialog>
         <Button as-child variant="secondary" class="w-full"><DialogTrigger><FileText aria-hidden="true" /> Ver órdenes</DialogTrigger></Button>

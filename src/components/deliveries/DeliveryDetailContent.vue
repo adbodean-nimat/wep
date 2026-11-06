@@ -22,6 +22,7 @@ const phones = computed(() => [props.delivery.contacto.telefono, props.delivery.
 const address = computed(() => mapAddress(props.delivery.entrega.domicilio, props.delivery.entrega.localidad))
 </script>
 <template>
+  <p v-if="delivery.contacto.modoPrueba" role="status" class="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">Modo de prueba: el contacto mostrado es el teléfono de prueba configurado para WEP.</p>
   <div class="space-y-5">
     <div><User class="mb-3 text-primary" aria-hidden="true" /><h2 class="break-words text-xl font-bold">{{ delivery.cliente.nombre || 'Cliente sin nombre' }}</h2><div class="mt-2"><DeliveryStatusBadge :status="delivery.estado.codigo" /></div></div>
     <div v-if="phones.length || address" class="flex flex-col gap-2"><Button v-for="(phone, index) in phones" :key="index" as-child variant="outline"><a :href="`tel:${phone.replace(/[^+\d]/g, '')}`"><Phone aria-hidden="true" />{{ index === 0 ? 'Llamar' : 'Llamar al alternativo' }}</a></Button><Button v-if="address" as-child variant="secondary"><a :href="`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`" target="_blank" rel="noopener noreferrer"><MapPin aria-hidden="true" /> Abrir mapa</a></Button></div>

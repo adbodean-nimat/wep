@@ -56,7 +56,7 @@ export interface Trip {
   paradas: WepStop[]
 }
 export interface DeliveryDetail extends Delivery {
-  contacto: { telefono: string | null; telefonoAlternativo: string | null; email: string | null }
+  contacto: { telefono: string | null; telefonoAlternativo: string | null; email: string | null; modoPrueba?: boolean }
   vehiculo: Vehicle
   viaje: { id: number | null; numeroVuelta: number | null; estado: TripStatus | null }
 }

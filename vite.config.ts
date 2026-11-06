@@ -10,13 +10,13 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'prompt',
-      includeAssets: ['favicon.svg', 'icons/*.png'],
+      includeAssets: ['favicon.svg', 'nimat-logo-*.svg', 'icons/*.png'],
       manifest: {
         name: 'WEP - Entregas',
         short_name: 'WEP',
         description: 'WhatsApp Entregas Programadas · Choferes',
         lang: 'es-AR',
-        theme_color: '#145c43',
+        theme_color: '#007c3b',
         background_color: '#f5f7f5',
         display: 'standalone',
         start_url: '/chofer/viajes',

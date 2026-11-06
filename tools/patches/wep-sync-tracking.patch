@@ -1,0 +1,503 @@
+diff --git a/server/src/modules/wep/wep-sync.service.js b/server/src/modules/wep/wep-sync.service.js
+--- a/server/src/modules/wep/wep-sync.service.js
++++ b/server/src/modules/wep/wep-sync.service.js
+@@ -1,6 +1,7 @@
+ import wepRepository from "./wep.repository.js";
+ import wepPostgresPool from "./wep-postgres.js";
+ import { normalizePlate } from "./plate.util.js";
++import wepSyncTrackingService from "./wep-sync-tracking.service.js";
+ 
+ const ALLOWED_VEHICLE_ERP_CODES = new Set(["101", "102", "103"]);
+ 
+@@ -266,10 +267,11 @@ function normalizeSqlTime(value) {
+ }
+ 
+ export class WepSyncService {
+-  constructor({ sourceRepository, postgresPool, logger } = {}) {
++  constructor({ sourceRepository, postgresPool, logger, syncTrackingService } = {}) {
+     this.sourceRepository = sourceRepository || wepRepository;
+     this.postgresPool = postgresPool || wepPostgresPool;
+     this.logger = logger || console;
++    this.syncTrackingService = syncTrackingService || wepSyncTrackingService;
+   }
+ 
+   async synchronize(filters) {
+@@ -460,6 +462,9 @@ export class WepSyncService {
+         else updated += 1;
+       }
+ 
++      const tracking = await this.syncTrackingService.ensureForTrips(
++        client, [...tripIds.values()],
++      );
+       await client.query("COMMIT");
+       transactionStarted = false;
+ 
+@@ -483,6 +488,7 @@ export class WepSyncService {
+         sourceRows: rows.length,
+         vehiculos: { procesados: vehicles.size },
+         viajes: { procesados: trips.size },
++        tracking,
+         entregas: {
+           procesadas: processed,
+           insertadas: inserted,
+diff --git a/server/src/modules/wep/wep-tracking.repository.js b/server/src/modules/wep/wep-tracking.repository.js
+--- a/server/src/modules/wep/wep-tracking.repository.js
++++ b/server/src/modules/wep/wep-tracking.repository.js
+@@ -1,8 +1,10 @@
+ import wepPostgresPool from "./wep-postgres.js";
+ 
+ export class WepTrackingRepository {
+-  constructor({ postgresPool } = {}) {
++  constructor({ postgresPool, transactionClient } = {}) {
+     this.postgresPool = postgresPool || wepPostgresPool;
++    // El llamador conserva la propiedad de BEGIN/COMMIT/ROLLBACK/release.
++    this.transactionClient = transactionClient;
+   }
+ 
+   async findStopDeliveries({ viajeId, clienteCodigo }) {
+@@ -29,7 +31,7 @@ export class WepTrackingRepository {
+     entregaId,
+     expiraAt,
+   }) {
+-    const client = await this.postgresPool.connect();
++    const client = this.transactionClient || await this.postgresPool.connect();
+     let transactionStarted = false;
+     const stopLockKey = JSON.stringify([
+       String(viajeId),
+@@ -39,8 +41,10 @@ export class WepTrackingRepository {
+     ]);
+ 
+     try {
+-      await client.query("BEGIN");
+-      transactionStarted = true;
++      if (!this.transactionClient) {
++        await client.query("BEGIN");
++        transactionStarted = true;
++      }
+       await client.query(
+         "SELECT pg_advisory_xact_lock(hashtext($1::text))",
+         [stopLockKey],
+@@ -102,14 +106,14 @@ export class WepTrackingRepository {
+         row = inserted.rows[0];
+       }
+ 
+-      await client.query("COMMIT");
++      if (transactionStarted) await client.query("COMMIT");
+       transactionStarted = false;
+       return row;
+     } catch (error) {
+       if (transactionStarted) await client.query("ROLLBACK").catch(() => {});
+       throw error;
+     } finally {
+-      client.release();
++      if (!this.transactionClient) client.release();
+     }
+   }
+ 
+diff --git a/server/src/modules/wep/wep-sync.service.test.js b/server/src/modules/wep/wep-sync.service.test.js
+--- a/server/src/modules/wep/wep-sync.service.test.js
++++ b/server/src/modules/wep/wep-sync.service.test.js
+@@ -75,6 +75,9 @@ function createService(database, rows = [sourceRow]) {
+     sourceRepository: { getEntregasProgramadas: async () => rows },
+     postgresPool: database.pool,
+     logger: createLogger(),
++    // Estas pruebas aíslan el contrato ERP/UPSERT. El tracking se prueba integrado
++    // en wep-sync-tracking.test.js con el mismo cliente transaccional.
++    syncTrackingService: { async ensureForTrips() { return { disponibles: 0 }; } },
+   });
+ }
+ 
+diff --git a/server/src/modules/wep/wep-sync-tracking.service.js b/server/src/modules/wep/wep-sync-tracking.service.js
+new file mode 100644
+--- /dev/null
++++ b/server/src/modules/wep/wep-sync-tracking.service.js
+@@ -0,0 +1,75 @@
++import { randomBytes } from "node:crypto";
++import { normalizeStopText } from "./wep-stop.util.js";
++import trackingService, { calculateTrackingExpiration } from "./wep-tracking.service.js";
++import { WepTrackingRepository } from "./wep-tracking.repository.js";
++
++// Sólo PostgreSQL: no llama servicios de avisos, WhatsApp ni posiciones GPS.
++export class WepSyncTrackingService {
++  constructor({
++    expirationDays = trackingService.expirationDays,
++    now = () => new Date(),
++    randomId = () => randomBytes(24).toString("base64url"),
++  } = {}) {
++    this.expirationDays = expirationDays;
++    this.now = now;
++    this.randomId = randomId;
++  }
++
++  async ensureForTrips(client, viajeIds) {
++    const summary = { disponibles: 0, omitidasSinDatos: 0, omitidasFueraVigencia: 0 };
++    if (!viajeIds.length) return summary;
++
++    // Leer después de TODOS los UPSERT: usa la asignación final persistida y la
++    // fecha más temprana de la parada, incluyendo sus órdenes ya existentes.
++    const result = await client.query(
++      `SELECT id, viaje_id, cliente_codigo, domicilio, localidad, fecha_entrega::text
++       FROM public.entregas
++       WHERE viaje_id = ANY($1::bigint[])
++       ORDER BY id`,
++      [[...new Set(viajeIds)]],
++    );
++    const stops = new Map();
++    for (const delivery of result.rows) {
++      const clienteCodigo = delivery.cliente_codigo == null ? "" : String(delivery.cliente_codigo);
++      const domicilio = normalizeStopText(delivery.domicilio);
++      const localidad = normalizeStopText(delivery.localidad);
++      const key = JSON.stringify([String(delivery.viaje_id), clienteCodigo, domicilio, localidad]);
++      const previous = stops.get(key);
++      const fecha = delivery.fecha_entrega;
++      if (previous) {
++        if (fecha && (!previous.fecha || fecha < previous.fecha)) previous.fecha = fecha;
++        if (Number(delivery.id) < Number(previous.entregaId)) previous.entregaId = delivery.id;
++      } else {
++        stops.set(key, {
++          viajeId: delivery.viaje_id, clienteCodigo,
++          domicilioNormalizado: domicilio, localidadNormalizada: localidad,
++          entregaId: delivery.id, fecha,
++        });
++      }
++    }
++
++    const repository = new WepTrackingRepository({ transactionClient: client });
++    const now = this.now().getTime();
++    // Orden estable de locks para ejecuciones concurrentes sobre varias paradas.
++    for (const key of [...stops.keys()].sort()) {
++      const stop = stops.get(key);
++      if (!stop.clienteCodigo.trim() || !stop.domicilioNormalizado || !stop.fecha) {
++        summary.omitidasSinDatos += 1;
++        continue;
++      }
++      const expiraAt = calculateTrackingExpiration(stop.fecha, this.expirationDays);
++      if (!Number.isFinite(expiraAt.getTime()) || expiraAt.getTime() <= now) {
++        // No recrear tokens vencidos de históricos en cada pasada del cron.
++        summary.omitidasFueraVigencia += 1;
++        continue;
++      }
++      await repository.getOrCreateActiveStopTracking({
++        ...stop, publicId: this.randomId(), expiraAt,
++      });
++      summary.disponibles += 1;
++    }
++    return summary;
++  }
++}
++
++export default new WepSyncTrackingService();
+diff --git a/server/src/modules/wep/wep-sync-tracking.test.js b/server/src/modules/wep/wep-sync-tracking.test.js
+new file mode 100644
+--- /dev/null
++++ b/server/src/modules/wep/wep-sync-tracking.test.js
+@@ -0,0 +1,212 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++import { WepSyncService } from "./wep-sync.service.js";
++import { WepSyncTrackingService } from "./wep-sync-tracking.service.js";
++import { WepTrackingRepository } from "./wep-tracking.repository.js";
++import { WepTrackingLookupRepository, WepTrackingLookupService } from "./wep-tracking-lookup.service.js";
++
++const now = new Date("2026-10-29T15:00:00Z");
++const firstId = "abcdefghijklmnopqrstuvwx12345678";
++const secondId = "ZYXWVUTSRQPONMLKJIHGFEDC87654321";
++const row = {
++  DivisionOrdenPreparacion: "01", TipoOrdenPreparacion: "OP", NumeroOrdenPreparacion: 123,
++  DivisionNotaPedido: "01", TipoNotaPedido: "NPC", NumeroNotaPedido: 883524,
++  CodigoCliente: "C001", NombreCliente: "Cliente de prueba",
++  DomicilioEntrega: " San Martín  123 ", Localidad: "Concordia",
++  TelefonoDomicilio: "+54 9 345 433-3569", FechaEntrega: "2026-10-29",
++  SalidaVehiculo: "2026-10-29", Vuelta: 1,
++  CodigoVehiculo: "101", NombreVehiculo: "Camión de prueba", PatenteVehiculo: "AA123BB",
++};
++const filters = { fechaDesde: "2026-10-29", fechaHasta: "2026-10-29" };
++
++function database({ failToken = false, failCommit = false, acquired = true } = {}) {
++  const queries = [];
++  let deliveries = [];
++  let tokens = [];
++  let snapshot;
++  let connections = 0;
++  let releases = 0;
++  const client = {
++    async query(sql, params = []) {
++      queries.push({ sql, params });
++      if (sql === "BEGIN") snapshot = structuredClone({ deliveries, tokens });
++      else if (sql === "ROLLBACK") { deliveries = snapshot.deliveries; tokens = snapshot.tokens; }
++      else if (sql === "COMMIT" && failCommit) throw new Error("commit fallido");
++      else if (sql.includes("pg_try_advisory_xact_lock")) return { rows: [{ acquired }] };
++      else if (sql.includes("pg_advisory_xact_lock")) return { rows: [] };
++      else if (sql.includes("public.vehiculos")) return { rows: [{ id: 10 }] };
++      else if (sql.includes("INSERT INTO public.viajes")) return { rows: [{ id: 20 + params[2] }] };
++      else if (sql.includes("public.entrega_estados")) return { rows: [{ id: 30 }] };
++      else if (sql.includes("INSERT INTO public.entregas")) {
++        const index = deliveries.findIndex(item => item.order === String(params[2]));
++        const delivery = {
++          order: String(params[2]), id: index < 0 ? deliveries.length + 1 : deliveries[index].id,
++          viaje_id: params[24], cliente_codigo: params[6], domicilio: params[8], localidad: params[9],
++          fecha_entrega: params[15], telefono: params[12], telefono_alternativo: params[13], pedido: params[5],
++        };
++        if (index < 0) deliveries.push(delivery); else deliveries[index] = delivery;
++        return { rows: [{ insertada: index < 0 }] };
++      } else if (sql.includes("WHERE viaje_id = ANY")) {
++        return { rows: deliveries.filter(item => params[0].includes(item.viaje_id)) };
++      } else if (sql.includes("UPDATE public.tracking_tokens")) {
++        tokens.filter(item => matches(item, params) && item.expira_at <= now).forEach(item => { item.activo = false; });
++      } else if (sql.includes("SELECT public_id, expira_at")) {
++        return { rows: tokens.filter(item => matches(item, params) && item.activo && item.expira_at > now) };
++      } else if (sql.includes("INSERT INTO public.tracking_tokens")) {
++        if (failToken) throw new Error("token fallido");
++        const token = {
++          public_id: params[0], viaje_id: params[1], cliente_codigo: params[2],
++          domicilio_normalizado: params[3], localidad_normalizada: params[4],
++          entrega_id: params[5], expira_at: params[6], activo: true,
++        };
++        tokens.push(token);
++        return { rows: [token] };
++      } else if (sql.includes("e.nota_pedido_numero::text = $1")) {
++        return { rows: deliveries.filter(item => item.pedido === params[0]).flatMap(delivery =>
++          tokens.filter(token => token.viaje_id === delivery.viaje_id
++            && token.cliente_codigo === delivery.cliente_codigo && token.activo && token.expira_at > now)
++            .map(token => ({ ...delivery, ...token }))) };
++      } else if (!["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) {
++        assert.fail(`Consulta inesperada: ${sql}`);
++      }
++      return { rows: [] };
++    },
++    release() { releases++; },
++  };
++  function matches(token, params) {
++    return token.viaje_id === params[0] && token.cliente_codigo === params[1]
++      && token.domicilio_normalizado === params[2] && token.localidad_normalizada === params[3];
++  }
++  return {
++    client, queries, get tokens() { return tokens; }, get deliveries() { return deliveries; },
++    get connections() { return connections; }, get releases() { return releases; },
++    pool: { async connect() { connections++; return client; }, query: (...args) => client.query(...args) },
++  };
++}
++
++function service(db, rows = [row]) {
++  const logs = [];
++  const sync = new WepSyncService({
++    sourceRepository: { async getEntregasProgramadas() { return rows; } },
++    postgresPool: db.pool,
++    syncTrackingService: new WepSyncTrackingService({ now: () => now }),
++    logger: { info: (...args) => logs.push(args), warn: (...args) => logs.push(args), error: (...args) => logs.push(args) },
++  });
++  return { sync, logs };
++}
++
++test("sincronizar un viaje PROGRAMADO habilita el lookup sin WhatsApp y sin filtrar el token", async () => {
++  const db = database();
++  const { sync, logs } = service(db);
++  const result = await sync.synchronize(filters);
++  assert.equal(result.tracking.disponibles, 1);
++  assert.equal(db.tokens.length, 1);
++  assert.match(db.tokens[0].public_id, /^[A-Za-z0-9_-]{32}$/);
++  assert.equal(db.tokens[0].expira_at.toISOString(), "2026-11-01T02:59:59.999Z");
++  const lookup = new WepTrackingLookupService({ repository: new WepTrackingLookupRepository({ postgresPool: db.pool }) });
++  assert.deepEqual(await lookup.lookup({ pedido: "883524", telefonoUltimos4: "3569" }), { publicId: db.tokens[0].public_id });
++  assert.equal(await lookup.lookup({ pedido: "883524", telefonoUltimos4: "9999" }), null);
++  const output = JSON.stringify({ result, logs });
++  for (const secret of [db.tokens[0].public_id, "3569", "3454333569"]) assert.ok(!output.includes(secret));
++  assert.equal(db.connections, 1);
++  assert.equal(db.releases, 1);
++  assert.equal(db.queries.filter(item => item.sql === "BEGIN").length, 1);
++  assert.equal(db.queries.filter(item => item.sql === "COMMIT").length, 1);
++});
++
++test("agrupa órdenes por parada y reutiliza tokens y enlaces entre sincronizaciones", async () => {
++  const db = database();
++  const rows = [row, { ...row, NumeroOrdenPreparacion: 124, NumeroNotaPedido: 883525, DomicilioEntrega: "SAN MARTÍN 123" }];
++  const { sync } = service(db, rows);
++  await sync.synchronize(filters);
++  const id = db.tokens[0].public_id;
++  const again = await sync.synchronize(filters);
++  assert.equal(again.tracking.disponibles, 1);
++  assert.equal(db.tokens.length, 1);
++  assert.equal(db.tokens[0].public_id, id);
++  assert.equal(db.queries.filter(item => item.sql.includes("INSERT INTO public.tracking_tokens")).length, 1);
++});
++
++test("separa por viaje, cliente y domicilio; una entrega sin teléfono puede recibir token", async () => {
++  const db = database();
++  const { sync } = service(db, [row,
++    { ...row, NumeroOrdenPreparacion: 124, Vuelta: 2 },
++    { ...row, NumeroOrdenPreparacion: 125, CodigoCliente: "C002" },
++    { ...row, NumeroOrdenPreparacion: 126, DomicilioEntrega: "Otro domicilio", TelefonoDomicilio: null },
++  ]);
++  assert.equal((await sync.synchronize(filters)).tracking.disponibles, 4);
++  assert.equal(db.tokens.length, 4);
++});
++
++test("omite claves incompletas e históricos sin recrear tokens vencidos", async () => {
++  const db = database();
++  const { sync } = service(db, [
++    { ...row, CodigoCliente: null },
++    { ...row, NumeroOrdenPreparacion: 124, DomicilioEntrega: " " },
++    { ...row, NumeroOrdenPreparacion: 125, FechaEntrega: "2026-10-01" },
++  ]);
++  const { tracking } = await sync.synchronize(filters);
++  assert.deepEqual(tracking, { disponibles: 0, omitidasSinDatos: 2, omitidasFueraVigencia: 1 });
++  assert.equal(db.tokens.length, 0);
++});
++
++test("usa la fecha más temprana de todas las órdenes de la parada", async () => {
++  const db = database();
++  const { sync } = service(db, [row, { ...row, NumeroOrdenPreparacion: 124, FechaEntrega: "2026-10-28" }]);
++  await sync.synchronize(filters);
++  assert.equal(db.tokens[0].expira_at.toISOString(), "2026-10-31T02:59:59.999Z");
++  assert.equal(db.tokens[0].entrega_id, 1);
++});
++
++for (const options of [{ failToken: true }, { failCommit: true }]) {
++  test(`un fallo revierte tokens y entregas juntos (${JSON.stringify(options)})`, async () => {
++    const db = database(options);
++    const { sync } = service(db);
++    await assert.rejects(sync.synchronize(filters), /fallido/);
++    assert.equal(db.tokens.length, 0);
++    assert.equal(db.deliveries.length, 0);
++    assert.equal(db.queries.at(-1).sql, "ROLLBACK");
++    assert.equal(db.releases, 1);
++  });
++}
++
++test("lock de sync ocupado no genera tokens ni importa entregas", async () => {
++  const db = database({ acquired: false });
++  assert.equal((await service(db).sync.synchronize(filters)).skipped, "SYNC_IN_PROGRESS");
++  assert.equal(db.tokens.length, 0);
++  assert.equal(db.deliveries.length, 0);
++});
++
++test("una lista de viajes vacía no hace consultas adicionales", async () => {
++  const client = { query() { assert.fail("no debe consultar"); } };
++  assert.equal((await new WepSyncTrackingService().ensureForTrips(client, [])).disponibles, 0);
++});
++
++test("el repositorio con cliente externo deja rollback y release a su propietario", async () => {
++  const queries = [];
++  const client = {
++    async query(sql) { queries.push(sql); if (sql.includes("INSERT")) throw new Error("fallido"); return { rows: [] }; },
++    release() { assert.fail("no debe liberar cliente externo"); },
++  };
++  const repository = new WepTrackingRepository({ transactionClient: client,
++    postgresPool: { connect() { assert.fail("no debe abrir conexión"); } },
++  });
++  await assert.rejects(repository.getOrCreateActiveStopTracking({
++    publicId: firstId, viajeId: 21, clienteCodigo: "C001", domicilioNormalizado: "SAN MARTÍN 123",
++    localidadNormalizada: "CONCORDIA", entregaId: 1, expiraAt: new Date("2026-11-01T02:59:59.999Z"),
++  }), /fallido/);
++  assert.ok(!queries.some(sql => ["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)));
++});
++
++test("un token vencido de una parada reprogramada se reemplaza sin reactivar el anterior", async () => {
++  const db = database();
++  db.tokens.push({ public_id: firstId, viaje_id: 21, cliente_codigo: "C001",
++    domicilio_normalizado: "SAN MARTÍN 123", localidad_normalizada: "CONCORDIA",
++    expira_at: new Date("2026-10-28T00:00:00Z"), activo: true });
++  const sync = service(db).sync;
++  sync.syncTrackingService.randomId = () => secondId;
++  await sync.synchronize(filters);
++  assert.equal(db.tokens.length, 2);
++  assert.equal(db.tokens[0].activo, false);
++  assert.equal(db.tokens[1].public_id, secondId);
++});
+diff --git a/server/src/modules/wep/SYNC-TRACKING.md b/server/src/modules/wep/SYNC-TRACKING.md
+new file mode 100644
+--- /dev/null
++++ b/server/src/modules/wep/SYNC-TRACKING.md
+@@ -0,0 +1,92 @@
++# Seguimiento disponible desde la sincronización
++
++La sincronización manual y el cron que utiliza `WepSyncService` generan o reutilizan
++un token público por parada, sin enviar WhatsApp, iniciar viajes ni consultar Gestya.
++El viaje puede seguir en estado `PROGRAMADO`.
++
++## Comportamiento
++
++Después de completar todos los UPSERT y antes del COMMIT, se leen las entregas
++persistidas de los viajes procesados. Se agrupan por viaje, cliente, domicilio y
++localidad normalizados con `normalizeStopText`, igual que el tracking existente.
++Varias órdenes de la misma parada comparten el enlace. La identidad representativa
++es la entrega de menor ID y la vigencia se calcula con la fecha más temprana de la
++parada, incluyendo órdenes ya presentes en WEP.
++
++Se reutilizan el repositorio y su bloqueo PostgreSQL por parada. Un token activo y
++vigente conserva su `publicId` y su vencimiento: repetir la sincronización no rota
++enlaces ni prolonga indefinidamente su duración. El envío posterior de WhatsApp
++reutiliza ese mismo token. Los tokens vencidos se desactivan y reemplazan sólo si
++la fecha de entrega todavía permite emitir uno vigente; los inactivos no se
++reactivan. No se crea un token por cada orden.
++
++La generación usa el mismo cliente y la misma transacción que sincroniza entregas.
++No abre otra conexión, ni confirma o libera el cliente del sincronizador. Si falla
++la generación o el COMMIT, se revierte la importación completa. El bloqueo global
++de sincronización se mantiene y también aplica al cron.
++
++## Condiciones y límites
++
++- Deben existir `tracking_tokens` y el esquema del tracking que ya usa el backend.
++  No se requiere una migración ni dependencias nuevas.
++- La parada debe tener cliente, domicilio y fecha. Una localidad vacía conserva
++  la normalización actual y no se inventa otra localidad.
++- `WEP_TRACKING_EXPIRATION_DAYS` mantiene su comportamiento actual: 2 por defecto,
++  hasta el final del segundo día posterior a la fecha de entrega, en Argentina.
++- Las paradas históricas cuyo vencimiento calculado ya pasó se omiten. No se
++  renuevan automáticamente sus enlaces por ejecutar una importación histórica.
++- Se puede generar el token aunque falte teléfono; la consulta `/s` continuará
++  exigiendo coincidencia con un teléfono válido registrado. El token solo no
++  corrige datos de contacto ni vuelve consultable una entrega sin ese dato.
++- Se conserva el filtro de vehículos ERP `101`, `102`, `103` y las reglas actuales
++  de importación y estado operativo. No se modifican las notificaciones.
++- Si cambia viaje, cliente o domicilio, se procesa la nueva identidad de parada.
++  Este cambio no agrega una política de revocación de todos los enlaces anteriores
++  ni conciliación de entregas eliminadas del ERP.
++
++La respuesta de sincronización agrega `tracking` con contadores:
++
++```json
++{
++  "tracking": {
++    "disponibles": 3,
++    "omitidasSinDatos": 0,
++    "omitidasFueraVigencia": 0
++  }
++}
++```
++
++`disponibles` cuenta paradas cuyo token se creó o reutilizó. No es un número de
++mensajes enviados ni garantiza que el pedido tenga teléfono válido. Ni esta
++respuesta ni los logs nuevos exponen tokens, enlaces o teléfonos. Los errores de
++lookup siguen siendo genéricos y se conserva el límite de intentos existente.
++
++## Habilitar pedidos ya sincronizados
++
++Desplegar este cambio y reiniciar el backend. Después ejecutar la sincronización
++habitual para la fecha del viaje, o esperar al próximo cron habilitado cuyo rango
++incluya esa fecha. Las entregas se actualizan por UPSERT y las paradas elegibles
++reciben token; no se debe ejecutar ningún endpoint de avisos de WhatsApp.
++
++Probar primero en testing: abrir `/s` e ingresar una NP y los últimos cuatro dígitos
++del teléfono de esa entrega. La búsqueda reutiliza el endpoint existente y no crea
++tokens por sí misma. Si no encuentra la entrega, comprobar los contadores, el dato
++de contacto, la NP persistida y la fecha/vigencia.
++
++## Pruebas sin servicios externos
++
++Desde `server`:
++
++```powershell
++node --test src/modules/wep/wep-sync-tracking.test.js src/modules/wep/wep-sync.service.test.js src/modules/wep/wep-tracking.test.js src/modules/wep/wep-tracking-lookup.test.js src/modules/wep/wep-sync-scheduler.test.js src/modules/wep/wep-programmed-notifications.test.js src/modules/wep/wep-en-reparto-notifications.test.js src/modules/wep/wep.test.js
++node --check src/modules/wep/wep-sync-tracking.service.js
++node --check src/modules/wep/wep-sync.service.js
++node --check src/modules/wep/wep-tracking.repository.js
++```
++
++Las pruebas usan repositorios y clientes PostgreSQL simulados; no conectan a bases
++reales ni envían mensajes. Cubren lookup después de importar un viaje programado,
++agrupación y separación de paradas, repetición sin duplicados, conservación de
++enlaces, vigencia, errores y rollback, uso del cliente transaccional y regresiones
++de los avisos y del seguimiento directo. No sustituyen una prueba de integración
++contra PostgreSQL de testing para verificar locks y restricciones del esquema.

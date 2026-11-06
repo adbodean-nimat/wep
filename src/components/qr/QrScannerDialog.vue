@@ -19,6 +19,8 @@ const readerId = `qr-reader-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
 const state = ref<ScannerState>('closed')
 const error = ref('')
 const result = ref<QrResolveResponse | null>(null)
+const contactAvailable = ref(false)
+const contactError = ref(false)
 let scanner: Html5QrcodeInstance | null = null
 let resolving = false
 let scannerGeneration = 0
@@ -29,9 +31,14 @@ const actionCopy: Record<Exclude<QrSuggestedAction, 'AVISAR_CLIENTE'>, string> =
   NO_ENTREGADA: 'Esta parada está marcada como no entregada.',
   VIAJE_NO_INICIADO: 'Primero debés iniciar la vuelta para avisar al cliente.',
 }
-const canNotice = computed(() => result.value?.accionSugerida === 'AVISAR_CLIENTE')
+const canNotice = computed(() => result.value?.accionSugerida === 'AVISAR_CLIENTE' && contactAvailable.value)
 const actionMessage = computed(() => {
   const action = result.value?.accionSugerida
+  if (action === 'AVISAR_CLIENTE' && !contactAvailable.value) {
+    return contactError.value
+      ? 'No pudimos consultar los teléfonos. Volvé a escanear para reintentar.'
+      : 'Sin teléfono principal ni alternativo. No se puede enviar el aviso. Solicitá que se cargue un teléfono y volvé a escanear.'
+  }
   return action && action !== 'AVISAR_CLIENTE' ? actionCopy[action] : ''
 })
 
@@ -78,7 +85,18 @@ async function resolveCode(decodedText: string, generation: number): Promise<voi
   await stopScanner()
   state.value = 'resolving'
   try {
-    result.value = await wepApi.resolveQr(decodedText)
+    const resolved = await wepApi.resolveQr(decodedText)
+    if (generation !== scannerGeneration || !props.open) return
+    result.value = resolved
+    contactAvailable.value = false
+    contactError.value = false
+    if (resolved.accionSugerida === 'AVISAR_CLIENTE') {
+      const contacts = await Promise.allSettled(resolved.parada.entregas.map(delivery => wepApi.delivery(delivery.id)))
+      if (generation !== scannerGeneration || !props.open) return
+      contactAvailable.value = contacts.some(response => response.status === 'fulfilled'
+        && [response.value.entrega.contacto.telefono, response.value.entrega.contacto.telefonoAlternativo].some(phone => phone && /\d/.test(phone)))
+      contactError.value = contacts.some(response => response.status === 'rejected')
+    }
     state.value = 'resolved'
   } catch (reason) {
     error.value = resolveMessage(reason)

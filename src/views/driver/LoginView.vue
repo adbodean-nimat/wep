@@ -76,7 +76,7 @@ onBeforeUnmount(() => controller?.abort())
 </script>
 
 <template>
-  <div class="flex min-h-[calc(100dvh-3.5rem)] items-center justify-center py-4">
+  <div class="flex min-h-[calc(100dvh-3.5rem)] items-center justify-center flex-col py-4">
     <section class="w-full rounded-2xl border bg-white p-6 shadow-sm" aria-labelledby="login-title">
       <div class="text-center">
         <div class="mx-auto flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground"><Truck :size="30" aria-hidden="true" /></div>
@@ -98,7 +98,7 @@ onBeforeUnmount(() => controller?.abort())
           <Select v-else v-model="selectedVehicleId" :disabled="submitting">
             <SelectTrigger id="vehicle-select"><SelectValue placeholder="Seleccionar camión" /></SelectTrigger>
             <SelectContent>
-              <SelectItem v-for="item in vehicles" :key="item.id" :value="String(item.id)">{{ item.patente }} - {{ item.nombre }}</SelectItem>
+              <SelectItem v-for="item in vehicles" :key="item.id" :value="String(item.id)">{{ item.nombre }}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -130,5 +130,6 @@ onBeforeUnmount(() => controller?.abort())
         </Button>
       </form>
     </section>
+    <RouterLink to="/administracion/login" class="mt-6 block text-center text-sm text-muted-foreground underline underline-offset-4">Administración WEP</RouterLink>
   </div>
 </template>

@@ -17,7 +17,7 @@ El puerto HTTP leído en `api.js` es **8099** y el HTTPS es **8090**. El ejemplo
 
 ### Sincronización de los viajes
 
-`GET /pwa/viajes` lee las tablas operativas de la PWA; no importa automáticamente las entregas programadas del ERP. En el backend inspeccionado tampoco hay un scheduler que invoque la sincronización. Antes de probar una fecha nueva, el backend debe ejecutar:
+`GET /pwa/viajes` lee las tablas operativas de la PWA; no importa directamente las entregas programadas del ERP. El backend incluye un scheduler configurable para importarlas desde Plataforma. Para activarlo, configurar `WEP_SYNC_ENABLED=true` y reiniciar la API; por defecto se ejecuta cada cinco minutos para hoy y los próximos siete días según la fecha argentina. La configuración de ejemplo lo mantiene desactivado. Ver `server/src/modules/wep/AUTO-SYNC.md` en el backend para configuración, concurrencia y alcance. También se puede ejecutar manualmente:
 
 ```http
 POST /api/wep/sync/entregas-programadas
@@ -84,8 +84,109 @@ En un teléfono, `localhost` es el teléfono: usar el host accesible del backend
 
 ## Rutas
 
+### Consulta pública por Nota de Pedido
+
+`/s` permite ingresar una NP y los últimos 4 dígitos del teléfono registrado.
+`/seguimiento` se conserva como alias público de la misma pantalla.
+Consume `POST /api/wep/public/tracking/lookup` sin token ni sesión de chofer y navega en la
+misma pestaña a `/s/:publicId`. Ambas rutas tienen `meta.public`; el guard existente las
+admite antes de restaurar la sesión. No se persiste el formulario ni se envía a analytics.
+
+El backend busca exclusivamente `entregas.nota_pedido_numero`, incluyendo las NP secundarias.
+Relaciona la entrega con un token por `viaje_id`, `cliente_codigo`, domicilio y localidad
+normalizados mediante `normalizeStopText`, el mismo helper del tracking existente.
+Sólo acepta tokens `activo = TRUE` y `expira_at > NOW()`. No crea tokens ni devuelve el DTO
+del tracking. La ventana temporal es la vigencia del token ya emitido (por defecto hasta
+el final del segundo día posterior a la fecha de entrega).
+
+**Disponibilidad:** sincronizar un pedido desde el ERP no basta para habilitar esta consulta.
+Esto describe el backend anterior al parche
+`tools/patches/wep-sync-tracking.patch`. Ese parche genera o reutiliza tokens dentro
+de la sincronización, sin WhatsApp; una vez aplicado y desplegado, volver a sincronizar
+la fecha del viaje habilita las paradas con datos completos y dentro de vigencia.
+Incluye instrucciones y pruebas en `server/src/modules/wep/SYNC-TRACKING.md`.
+Hasta aplicar ese cambio, se mantiene el comportamiento siguiente:
+Debe existir previamente un token para esa parada. Los servicios de avisos programados,
+en reparto y acciones de parada llaman a `getOrCreateTrackingForStop` como parte de sus
+flujos. El lookup sólo lee: no genera, renueva ni reactiva tokens y tampoco envía WhatsApp.
+Un token puede existir aunque falle el envío posterior del aviso; recibir el mensaje no
+es una condición de búsqueda. La vigencia se calcula con `WEP_TRACKING_EXPIRATION_DAYS`
+(2 por defecto, al final del día en Argentina); sin fecha válida se usa la fecha de emisión
+más esa cantidad de días. Si varios pedidos pertenecen a una parada, pueden devolver el
+mismo `publicId`, siempre que cada uno cumpla las condiciones de coincidencia.
+
+La comparación reutiliza `normalizeAvailablePhone`: primero `telefono`, luego
+`telefono_alternativo` si el principal no es válido para WhatsApp. El helper existente
+normaliza los formatos argentinos y descarta valores ambiguos; se comparan sólo los
+últimos cuatro dígitos del número normalizado. No se admite el alternativo cuando existe
+un principal válido. Cada NP se verifica con el teléfono sincronizado de su propia entrega.
+
+**Postman:** POST a `http://localhost:8099/api/wep/public/tracking/lookup`, sin Authorization,
+con `Content-Type: application/json` y body:
+
+```json
+{ "pedido": "883524", "telefonoUltimos4": "3569" }
+```
+
+Con una entrega real cuyo tracking esté vigente, espera `200` y `{ "ok": true, "publicId": "..." }`.
+Repite con una NP secundaria de esa parada: debe devolver el mismo publicId si coincide su teléfono.
+Un teléfono incorrecto, NP inexistente, token vencido/inactivo o ausencia de tracking devuelve
+siempre `404` con `No encontramos una entrega con los datos ingresados.` Un body inválido
+devuelve `400`; un error interno devuelve `500` sin detalles. El sexto intento desde la misma
+IP dentro de la ventana devuelve `429` con `Retry-After`, incluso si los anteriores fueron exitosos.
+
+**Navegador:** ejecutar un backend de testing y `npm run dev`; abrir `http://localhost:5173/s`
+en una ventana privada. Verificar errores de campos, búsqueda válida, navegación a `/s/:publicId`,
+mensajes genéricos para 404/429 y botón Reintentar para errores de conexión. Recargar ambas rutas
+sin login. En producción se conserva el fallback de Nginx a `index.html`.
+
+**Variables nuevas del backend** (incluidas en `server/.env.example`):
+
+```dotenv
+WEP_TRACKING_LOOKUP_RATE_LIMIT_MAX=5
+WEP_TRACKING_LOOKUP_RATE_LIMIT_WINDOW_MINUTES=10
+```
+
+El limitador sigue la arquitectura en memoria existente de WEP: cuota por IP y por proceso,
+con limpieza de entradas vencidas. Un reinicio reinicia la cuota; varias instancias no la comparten.
+No hay cuota adicional por NP en esta etapa; se puede endurecer luego con almacenamiento compartido
+y un límite por NP. La auditoría incluye timestamp, NP y resultado; omite teléfono, últimos cuatro,
+publicId e IP.
+
+**Proxy:** `api.js` no configura `trust proxy`. El limitador usa `req.ip` y no confía directamente
+en `X-Forwarded-For`. Con un proxy delante, la cuota se aplica a la IP del proxy mientras no exista
+una configuración de confianza: varios usuarios podrían compartir los cinco intentos. Antes de
+desplegar detrás de Nginx, verificar la topología y configurar en Express únicamente las IP/subredes
+de proxies confiables, bloqueando acceso directo al backend. No se cambió globalmente `trust proxy`
+sin conocer esa infraestructura.
+
+**Privacidad:** el frontend envía pedido y dígitos únicamente en el JSON del POST, sin
+Authorization, cookies ni referrer. No agrega esos campos a URLs, almacenamiento ni registros;
+limpia los campos al salir y sólo navega al `publicId` validado. Los errores de la pantalla
+son textos locales y no muestran contenido arbitrario del backend. No hay reintentos
+automáticos, incluso ante 429; el servidor conserva la autoridad sobre la cuota por IP.
+La auditoría existente del backend sí registra la NP: si se requiere omitir también ese
+identificador, hace falta un cambio independiente en `auditTrackingLookup`. Revisar también
+la configuración de logs del proxy/APM para no capturar cuerpos de solicitudes. El `publicId`
+es un enlace de acceso al seguimiento y debe tratarse como tal al compartirlo.
+
+Esta implementación modifica sólo frontend, pruebas y documentación. No ejecuta avisos,
+sincronizaciones, generación de tokens ni escrituras sobre datos de producción.
+
+Pruebas del backend: `node --test src/modules/wep/wep-tracking-lookup.test.js` desde `server`.
+Pruebas del frontend: `npm test`; compilación: `npm run build`.
+Las pruebas del formulario usan Vue Test Utils y happy-dom con respuestas simuladas:
+validación, ceros iniciales, bloqueo de doble envío, carga, 400/404/429/500, fallo de red,
+reintento manual, limpieza de campos y cancelación al salir. Las pruebas de API verifican
+POST sin credenciales, `no-store`, respuestas inválidas y validación del identificador antes
+de navegar. Las rutas públicas se comprueban sin restaurar sesión de chofer.
+Si el aislamiento de Windows impide a esbuild cargar la configuración (`Access is denied`),
+usar `npm test -- --configLoader runner` y `npm run build -- --configLoader runner`.
+
 | Ruta | Pantalla |
 | --- | --- |
+| `/s` (alias `/seguimiento`) | Consulta pública por pedido y últimos cuatro dígitos |
+| `/s/:publicId` | Seguimiento público existente |
 | `/chofer` | Redirige a login o viajes según la sesión |
 | `/chofer/login` | Selección de camión e ingreso de PIN |
 | `/chofer/viajes` | Vueltas del día local |
@@ -114,6 +215,7 @@ Todos relativos a `VITE_API_BASE_URL`:
 
 | Método | Endpoint | Envío |
 | --- | --- | --- |
+| POST | `/public/tracking/lookup` | `{ "pedido": "883524", "telefonoUltimos4": "3569" }`, público |
 | GET | `/auth/vehiculos` | Público |
 | POST | `/auth/login` | `{ "vehiculoId": 1, "pin": "..." }`, público |
 | GET | `/auth/me` | Bearer de sesión |
@@ -188,6 +290,26 @@ Abrir `http://localhost:4173/chofer/viajes`. Este servidor usa datos sintéticos
 - El endpoint de orden actualmente no valida el estado PROGRAMADO en el backend. La PWA limita los controles y vuelve a consultar el estado antes de guardar, pero no puede garantizar atomicidad frente a otro operador que inicie simultáneamente. Requiere validación backend en una etapa posterior.
 - Reordenamiento mediante botones; no se agregó drag & drop, conforme a la preferencia de comenzar por controles previsibles en móvil.
 - Peso y volumen se muestran sin asumir unidades que el contrato no declara.
-- Sin mapas internos, tracking público, GESTYA directo, geocercas, avisos por proximidad, fotos, firma, WebSocket, optimización de rutas ni operaciones offline.
+- Sin mapas internos, GESTYA directo, geocercas, avisos por proximidad, fotos, firma, WebSocket, optimización de rutas ni operaciones offline. El tracking público y su consulta por pedido sí están disponibles.
 
 Referencias de configuración: [Vite](https://vite.dev/guide/), [shadcn/vue para Vite](https://shadcn-vue.com/docs/installation/vite), [Vite PWA](https://vite-pwa-org.netlify.app/guide/service-worker-strategies-and-behaviors).
+
+## Configuración administrativa y accesos de camiones
+
+En `/administracion`, el rol TIC dispone de **Configuración** y **Camiones y accesos**.
+Permiten administrar la sincronización automática y el bloqueo global de importaciones,
+los días/horarios y simulación de avisos, Meta exclusivo de WEP y los PIN/accesos de
+los camiones. Nombre y patente siguen actualizándose desde ERP por su código estable.
+El rol CONSULTA conserva únicamente la vista operativa.
+
+Requiere desplegar también el backend, aplicar `server/database/wep-settings.sql`
+y configurar `WEP_SETTINGS_ENABLED=true`, `WEP_SETTINGS_ENCRYPTION_KEY` y las
+credenciales exclusivas de WEP. El procedimiento está en
+`server/src/modules/wep/SETTINGS.md` del repositorio de la API. La migración no se
+ejecuta desde el navegador. El token de Meta nunca se devuelve al frontend; se
+envía únicamente al establecerlo o reemplazarlo y se almacena cifrado en servidor.
+
+El tablero distingue revisión guardada de revisión aplicada por el ejecutor.
+Los cambios de horarios se recargan cada 15 segundos; los formularios detectan
+conflictos de revisión y conservan el borrador ante errores. Cambiar PIN o bloquear
+el acceso revoca las sesiones del camión. Todas estas escrituras tienen auditoría.
