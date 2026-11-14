@@ -99,21 +99,38 @@ Sólo acepta tokens `activo = TRUE` y `expira_at > NOW()`. No crea tokens ni dev
 del tracking. La ventana temporal es la vigencia del token ya emitido (por defecto hasta
 el final del segundo día posterior a la fecha de entrega).
 
-**Disponibilidad:** sincronizar un pedido desde el ERP no basta para habilitar esta consulta.
-Esto describe el backend anterior al parche
-`tools/patches/wep-sync-tracking.patch`. Ese parche genera o reutiliza tokens dentro
-de la sincronización, sin WhatsApp; una vez aplicado y desplegado, volver a sincronizar
-la fecha del viaje habilita las paradas con datos completos y dentro de vigencia.
-Incluye instrucciones y pruebas en `server/src/modules/wep/SYNC-TRACKING.md`.
-Hasta aplicar ese cambio, se mantiene el comportamiento siguiente:
-Debe existir previamente un token para esa parada. Los servicios de avisos programados,
-en reparto y acciones de parada llaman a `getOrCreateTrackingForStop` como parte de sus
-flujos. El lookup sólo lee: no genera, renueva ni reactiva tokens y tampoco envía WhatsApp.
-Un token puede existir aunque falle el envío posterior del aviso; recibir el mensaje no
-es una condición de búsqueda. La vigencia se calcula con `WEP_TRACKING_EXPIRATION_DAYS`
-(2 por defecto, al final del día en Argentina); sin fecha válida se usa la fecha de emisión
-más esa cantidad de días. Si varios pedidos pertenecen a una parada, pueden devolver el
-mismo `publicId`, siempre que cada uno cumpla las condiciones de coincidencia.
+**Disponibilidad:** el backend actual ya genera o reutiliza un token por parada dentro
+de `WepSyncService`, después de los UPSERT y antes del COMMIT, con el mismo cliente
+PostgreSQL. Aplica al endpoint manual y al scheduler. No requiere enviar WhatsApp ni
+iniciar la vuelta: el viaje puede permanecer `PROGRAMADO`. El archivo
+`tools/patches/wep-sync-tracking.patch` es una referencia histórica; no debe aplicarse
+al backend que ya contiene esta implementación.
+
+La agrupación usa viaje, cliente, domicilio y localidad normalizados. Pedidos de una
+misma parada comparten `publicId`, pero cada NP se consulta con el teléfono de su propia
+entrega. Se requiere cliente, domicilio y fecha para generar el token; un teléfono
+ausente o inválido no impide generarlo, pero sí impide encontrar esa entrega desde `/s`.
+El contador `tracking.disponibles` cuenta paradas con token, no pedidos consultables ni
+mensajes enviados.
+
+Un token activo y vigente conserva su enlace y vencimiento al repetir la sincronización.
+Los vencidos se reemplazan sólo si la fecha de entrega todavía permite emitir un token
+vigente; los inactivos no se reactivan. Las paradas históricas fuera de vigencia se
+omiten. Para tokens nuevos, `WEP_TRACKING_EXPIRATION_DAYS` vale 2 por defecto: fin del
+segundo día posterior a la fecha más temprana de las entregas de la parada, en Argentina.
+Si falla la generación, la importación completa se revierte. Los avisos posteriores
+reutilizan el token. El lookup sólo lee: no genera, renueva ni reactiva tokens y tampoco
+envía WhatsApp.
+
+**Despliegue y validación:** la presencia de esta implementación en el repositorio no
+confirma que esté desplegada ni que el esquema de testing esté actualizado. Para pedidos
+ya importados, desplegar/reiniciar el backend correspondiente y volver a sincronizar
+la fecha del viaje, o esperar un cron habilitado que la incluya. Ver
+`server/src/modules/wep/SYNC-TRACKING.md` y el procedimiento reproducible
+`server/src/modules/wep/SYNC-TRACKING-TESTING.md` en el backend. Las pruebas con mocks
+no sustituyen la integración con PostgreSQL, ERP y `/s` de testing. No ejecutar la
+sincronización contra producción ni modificar entregas reales sin revisar el alcance
+y obtener aprobación previa.
 
 La comparación reutiliza `normalizeAvailablePhone`: primero `telefono`, luego
 `telefono_alternativo` si el principal no es válido para WhatsApp. El helper existente

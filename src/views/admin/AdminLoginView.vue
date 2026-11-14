@@ -17,7 +17,13 @@ async function login() {
 </script>
 <template>
   <div class="mx-auto flex min-h-[85dvh] max-w-md flex-col justify-center py-10">
-    <div class="mb-9 flex items-center justify-between gap-4"><RouterLink to="/chofer/login" aria-label="NIMAT · WEP"><img :src="'/nimat-logo-verde.svg'" alt="NIMAT · Materiales para la construcción" width="351" height="120" class="h-auto w-40 dark:hidden"><img :src="'/nimat-logo-blanco.svg'" alt="NIMAT · Materiales para la construcción" width="351" height="120" class="hidden h-auto w-40 dark:block"></RouterLink><AppearanceSelect /></div>
+    <div class="mb-9 flex items-center justify-between gap-4">
+      <RouterLink to="/chofer/login" aria-label="NIMAT · WEP">
+        <img :src="'/nimat-logo-verde.svg'" alt="NIMAT · Materiales para la construcción" width="351" height="120" class="h-auto w-40 dark:hidden">
+        <img :src="'/nimat-logo-blanco.svg'" alt="NIMAT · Materiales para la construcción" width="351" height="120" class="hidden h-auto w-40 dark:block">
+      </RouterLink>
+      <AppearanceSelect />
+    </div>
     <div class="mb-5 flex size-12 items-center justify-center rounded-2xl bg-secondary text-primary"><ShieldCheck aria-hidden="true" /></div>
     <p class="text-xs font-bold uppercase tracking-widest text-primary">Administración</p>
     <h1 class="mt-2 text-3xl font-bold tracking-tight">Toda la operación,<br>en un solo lugar.</h1>

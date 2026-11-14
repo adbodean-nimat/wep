@@ -7,3 +7,5 @@ dist-qa-admin/
 !.env.example
 *.local
 .npm-cache/
+.presentacion-wep-build
+presentacion-wep
